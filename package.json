@@ -17,6 +17,7 @@
     "@deepseek-ai/cordis": "file:../deepseek-harness/vendor/cordis",
     "@deepseek-ai/dsh-agent": "file:../deepseek-harness/packages/core/agent",
     "@deepseek-ai/dsh-client-runtime": "file:../deepseek-harness/packages/client/runtime",
+    "@deepseek-ai/dsh-client-ui-conversation": "file:../deepseek-harness/packages/client/ui-conversation",
     "@deepseek-ai/dsh-client-ui-layout": "file:../deepseek-harness/packages/client/ui-layout",
     "@deepseek-ai/dsh-client-ui-sidebar": "file:../deepseek-harness/packages/client/ui-sidebar",
     "@deepseek-ai/dsh-client-ui-slots": "file:../deepseek-harness/packages/client/ui-slots",

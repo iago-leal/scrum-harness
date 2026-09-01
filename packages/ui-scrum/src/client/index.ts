@@ -1,22 +1,20 @@
 /**
- * Browser half of the SCRUM board plugin: injects the stylesheet, creates the
- * ONE shared store handle, and registers the sidebar trigger plus the overlay
- * panel into their layout-owned list slots. Mutations funnel through the
- * injected `run` callback so busy/error handling lives here, not in
- * components.
+ * Browser half of the SCRUM board plugin: injects the stylesheet and
+ * registers the ▦ SCRUM tab into the conversation view ring (`Chat ·
+ * Trajectory · ▦ SCRUM`). Mutations funnel through the injected `run`
+ * callback so busy/error handling lives here, not in components. Until v0.8
+ * the board was a sidebar button + full-screen overlay; since v0.9 the tab
+ * is the only surface.
  * @module @scrum-harness/ui/client
  */
 
 import type { ClientContext } from '@deepseek-ai/dsh-client-runtime/client'
-// Type-only: pulls the SlotMap merges for the target slots.
-import type {} from '@deepseek-ai/dsh-client-ui-layout/client'
-import type {} from '@deepseek-ai/dsh-client-ui-sidebar/client'
 import { act, fetchState } from './api.ts'
+import type { ScrumState } from './api.ts'
 import { createScrumStore } from './store.ts'
-import { Panel } from './Panel.tsx'
-import type { PanelInjected } from './Panel.tsx'
 import { PRIMER_CSS } from './primer.ts'
-import { ScrumButton } from './ScrumButton.tsx'
+import { ScrumView } from './ScrumView.tsx'
+import type { ScrumViewInjected } from './ScrumView.tsx'
 import { SCRUM_CSS } from './styles.ts'
 
 export const name = 'ui-scrum'
@@ -38,33 +36,44 @@ export function apply(ctx: ClientContext): void {
     return () => { tag.remove() }
   }, 'ui-scrum: stylesheet')
 
-  const store = createScrumStore()
+  // One store handle mounts under exactly one scope: this one lives in the
+  // session scope of the view ring (an instance per session). Anything else
+  // wanting the same data shares by DATA (the /scrum-api routes), never by
+  // handle — see the 01/09 postmortem in the README.
+  const viewStore = createScrumStore()
 
-  ctx.slots.inject('sidebar.footer.action', () => ctx.slots.register({
-    name: 'sidebar.footer.action',
-    id: 'scrum-board',
-    store,
-  }, ScrumButton))
+  /**
+   * Wrap the wire calls with busy/error handling against one bound store.
+   * @param actions - bound actions of the store instance to settle into.
+   */
+  const wireFace = (actions: {
+    setBusy: (busy: boolean) => void
+    setData: (data: ScrumState) => void
+    setError: (error: string | null) => void
+  }): ScrumViewInjected => {
+    /** Apply one settled wire result into the store. */
+    const settle = (work: Promise<ScrumState>): void => {
+      actions.setBusy(true)
+      work
+        .then((state) => { actions.setData(state) })
+        .catch((error: unknown) => {
+          actions.setError(error instanceof Error ? error.message : String(error))
+        })
+        .finally(() => { actions.setBusy(false) })
+    }
+    return {
+      refresh: (workspace) => { settle(fetchState(workspace)) },
+      run: (action, workspace) => { settle(act(action, workspace)) },
+    }
+  }
 
-  ctx.slots.inject('shell.overlay', () => ctx.slots.register({
-    name: 'shell.overlay',
-    id: 'scrum-board',
-    store,
-    inject: (actions): PanelInjected => {
-      /** Apply one settled wire result into the store. */
-      const settle = (work: Promise<import('./api.ts').ScrumState>): void => {
-        actions.setBusy(true)
-        work
-          .then((state) => { actions.setData(state) })
-          .catch((error: unknown) => {
-            actions.setError(error instanceof Error ? error.message : String(error))
-          })
-          .finally(() => { actions.setBusy(false) })
-      }
-      return {
-        refresh: (workspace) => { settle(fetchState(workspace)) },
-        run: (action, workspace) => { settle(act(action, workspace)) },
-      }
-    },
-  }, Panel))
+  // The SCRUM tab in the conversation view ring (chat: 0, trajectory: 10).
+  ctx.slots.inject('conversation.view', () => ctx.slots.register({
+    name: 'conversation.view',
+    id: 'scrum',
+    order: 20,
+    label: () => '▦ SCRUM',
+    store: viewStore,
+    inject: (_sessionId, actions): ScrumViewInjected => wireFace(actions),
+  }, ScrumView))
 }

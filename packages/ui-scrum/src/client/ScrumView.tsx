@@ -1,18 +1,20 @@
 /**
- * The full-screen SCRUM panel, registered into the layout's `shell.overlay`
- * list slot. Renders nothing while closed; while open it shows the section
- * tabs (Backlog / Board / Sprints) over the shared store's fetched state and
- * polls for fresh state so model-made changes appear without a manual reload.
- * Since v0.5 the panel is per-workspace: it follows the current session's
- * workspace (falling back to the most recent workspace, then to the global
- * board), shows it in the header, and sends it with every API call.
- * @module @scrum-harness/ui/client/Panel
+ * The SCRUM conversation view: one entry in the `conversation.view` tab ring
+ * (Chat · Trajectory · ▦ SCRUM). Carries the whole board — section tabs
+ * (Backlog / Board / Sprints / Arquivo / Lixeira) over the view store's
+ * fetched state — inline in the conversation area: no backdrop, no close
+ * button, polling while mounted (the ring renders only the active view).
+ * The board shown is the tab's own session workspace (falling back to the
+ * most recent workspace, then the global board).
+ * @module @scrum-harness/ui/client/ScrumView
  */
 
 import { useEffect } from 'react'
 import type { PropsRuntime, PropsStore } from '@deepseek-ai/dsh-client-ui-slots'
+// Type-only: pulls the 'conversation.view' SlotMap row declared by ui-conversation.
+import type {} from '@deepseek-ai/dsh-client-ui-conversation/client'
 import type { createScrumStore } from './store.ts'
-import type { BoardLevel, ScrumView } from './store.ts'
+import type { BoardLevel, ScrumView as SectionView } from './store.ts'
 import { Board } from './Board.tsx'
 import { resolveNode, WorkItemForm } from './Details.tsx'
 import { Shelf } from './Shelf.tsx'
@@ -20,8 +22,8 @@ import { Sprints } from './Sprints.tsx'
 import { Tree } from './Tree.tsx'
 
 /** Injected face: same-origin API calls wrapped by apply. */
-export interface PanelInjected {
-  /** Fetch fresh state of one workspace's board into the store. */
+export interface ScrumViewInjected {
+  /** Fetch fresh state of one workspace's board into the view store. */
   refresh: (workspace: string | null) => void
   /** Run one mutation on one workspace's board; apply updates the store. */
   run: (action: Record<string, unknown>, workspace: string | null) => void
@@ -34,13 +36,13 @@ interface WorkspaceLike {
   title?: string
 }
 
-/** Full composed props of the panel registration. */
-export type PanelProps =
-  & PropsRuntime<'shell.overlay'>
+/** Full composed props of the view registration. */
+export type ScrumViewProps =
+  & PropsRuntime<'conversation.view'>
   & PropsStore<ReturnType<typeof createScrumStore>>
-  & PanelInjected
+  & ScrumViewInjected
 
-const TABS: { view: ScrumView; label: string }[] = [
+const TABS: { view: SectionView; label: string }[] = [
   { view: 'backlog', label: 'Backlog' },
   { view: 'board', label: 'Board' },
   { view: 'sprints', label: 'Sprints' },
@@ -48,12 +50,11 @@ const TABS: { view: ScrumView; label: string }[] = [
   { view: 'trash', label: 'Lixeira' },
 ]
 
-/** Poll interval while the panel is open (model/tool changes appear live). */
+/** Poll interval while the view is mounted (model/tool changes appear live). */
 const POLL_MS = 4000
 
-/** The overlay panel. */
-export function Panel(props: PanelProps) {
-  const open = props.useStore(s => s.open)
+/** The SCRUM tab body. */
+export function ScrumView(props: ScrumViewProps) {
   const view = props.useStore(s => s.view)
   const data = props.useStore(s => s.data)
   const error = props.useStore(s => s.error)
@@ -62,11 +63,11 @@ export function Panel(props: PanelProps) {
   const selected = props.useStore(s => s.selected)
   const boardLevel = props.useStore(s => s.boardLevel)
   const swimlanes = props.useStore(s => s.swimlanes)
-  const { refresh } = props
+  const { refresh, sessionId } = props
 
-  // The board this panel shows: the current session's workspace, then the
-  // most recent workspace, then the global fallback board.
-  const sessionCwd = props.useSessions(s => (s.current !== undefined ? s.byId[s.current]?.cwd : undefined))
+  // The board this tab shows: its own session's workspace, then the most
+  // recent workspace, then the global fallback board.
+  const sessionCwd = props.useSessions(s => s.byId[sessionId]?.cwd)
   const workspaces = props.useWorkspaces(s => s.items as readonly WorkspaceLike[])
   const recentId = props.useWorkspaces(s => s.recentWorkspaceId as string | undefined)
   const recent = workspaces.find(w => w.id === recentId)
@@ -77,17 +78,14 @@ export function Panel(props: PanelProps) {
       ?? wsPath.split('/').filter(part => part.length > 0).pop()
       ?? wsPath
 
+  // The ring mounts only the active view, so "mounted" is the poll gate.
   useEffect(() => {
-    if (!open) return
     refresh(wsPath)
     const timer = window.setInterval(() => { refresh(wsPath) }, POLL_MS)
     return () => { window.clearInterval(timer) }
-  }, [open, refresh, wsPath])
+  }, [refresh, wsPath])
 
-  if (!open) return null
-
-  const close = () => { props.actions.setOpen(false) }
-  /** Run one mutation against the board this panel is showing. */
+  /** Run one mutation against the board this tab is showing. */
   const run = (action: Record<string, unknown>) => { props.run(action, wsPath) }
   const callbacks = {
     run,
@@ -114,11 +112,10 @@ export function Panel(props: PanelProps) {
 
   return (
     <div
-      className="scrum-overlay"
+      className="scrum-view"
       // Activates (and scopes) the Primer color theme of primer.ts.
       data-color-mode="light"
       data-light-theme="light"
-      onMouseDown={(e) => { if (e.target === e.currentTarget) close() }}
     >
       <div className="scrum-panel">
         <div className="scrum-head">
@@ -139,7 +136,6 @@ export function Panel(props: PanelProps) {
           </div>
           <span className="scrum-spacer" />
           <button className="scrum-tab" title="Atualizar" onClick={() => { refresh(wsPath) }}>⟳</button>
-          <button className="scrum-close" title="Fechar" onClick={close}>✕</button>
         </div>
         {error !== null && <div className="scrum-error">{error}</div>}
         <div className={`scrum-body${busy ? ' scrum-busy' : ''}`}>

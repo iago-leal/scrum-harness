@@ -1,7 +1,7 @@
 {
   "name": "@scrum-harness/ui",
   "version": "0.1.0",
-  "description": "SCRUM web board for the DeepSeek Harness GUI: sidebar button + full-screen panel with the Release > Feature > Component > Task tree, sprint Kanban board and ceremonies",
+  "description": "SCRUM web board for the DeepSeek Harness GUI: a conversation-view tab (next to Chat and Trajectory) with the Release > Feature > Component > Task tree, sprint Kanban board and ceremonies",
   "type": "module",
   "main": "lib/index.js",
   "types": "lib/index.d.ts",

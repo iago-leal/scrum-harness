@@ -1,8 +1,7 @@
 /**
- * Shared viewing store of the SCRUM board: panel visibility, the active
- * section, and the last fetched wire state (shared by the sidebar button and
- * the overlay panel). Module exports the factory only; apply creates ONE
- * handle and passes it to both registrations.
+ * Viewing store of the SCRUM board: the active section and the last fetched
+ * wire state. Module exports the factory only; apply creates the handle of
+ * the view-ring registration.
  * @module @scrum-harness/ui/client/store
  */
 
@@ -17,8 +16,6 @@ export type BoardLevel = 'task' | 'component' | 'feature'
 
 /** Board viewing state. */
 export interface ScrumViewState {
-  /** Whether the overlay panel is open. */
-  open: boolean
   /** Active panel section. */
   view: ScrumView
   /** Last fetched wire state; null before the first load. */
@@ -43,7 +40,6 @@ export interface ScrumViewState {
  * signature, which only type literals satisfy implicitly.
  */
 export type ScrumViewActions = {
-  setOpen: (draft: ScrumViewState, open: boolean) => void
   setView: (draft: ScrumViewState, view: ScrumView) => void
   setData: (draft: ScrumViewState, data: ScrumState) => void
   setError: (draft: ScrumViewState, error: string | null) => void
@@ -57,16 +53,15 @@ export type ScrumViewActions = {
 
 /**
  * Create the board store handle.
- * @returns the store handle shared by the button and panel registrations.
+ * @returns the store handle of the view-ring registration (one instance per session).
  */
 export function createScrumStore(): EngineStoreHandle<ScrumViewState, ScrumViewActions> {
   return defineStore({
     init: (): ScrumViewState => ({
-      open: false, view: 'backlog', data: null, error: null, busy: false,
+      view: 'backlog', data: null, error: null, busy: false,
       collapsed: {}, selected: null, boardLevel: 'task', swimlanes: true,
     }),
     actions: {
-      setOpen: (d, open: boolean) => { d.open = open },
       setView: (d, view: ScrumView) => { d.view = view },
       setData: (d, data: ScrumState) => { d.data = data; d.error = null },
       setError: (d, error: string | null) => { d.error = error },

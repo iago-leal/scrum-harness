@@ -27,6 +27,8 @@ Release
 
 **Agente ciente do quadro** (v0.7): o plugin `context-scrum` (padrão do `time-context` do DSH) intercepta o waterfall `agent/pre-step` e, no **1º step de cada turno**, resolve o quadro do workspace da sessão (`agent.session.header.cwd`) e injeta uma mensagem de contexto durável e atribuída ao plugin com o snapshot da **sprint ativa** — colunas com ids/pontos, estados explícitos dos pais e a instrução da disciplina de "board ao vivo" (mover a tarefa ao começar/terminar, manter os pais, registrar cerimônias). Só injeta **quando o snapshot mudou** desde a última injeção (o próprio texto é a chave, guardado em `WeakMap` por agente); sem sprint ativa, não injeta nada. Assim a disciplina que era hábito do agente vira contrato do harness — inclusive para o próprio agente que desenvolve este repositório.
 
+**SCRUM como aba** (v0.9): o quadro deixa de ser botão na sidebar + overlay e vira **view de conversa de primeira classe** — uma entry no anel `conversation.view` (`{ id: 'scrum', order: 20 }`; Chat=0, Trajectory=10), a aba **▦ SCRUM** ao lado de Chat e Trajectory. O corpo inteiro do painel (Backlog/Board/Sprints/Arquivo/Lixeira + work item form) renderiza inline preenchendo a `viewArea` do shell, sem backdrop nem botão fechar: o anel monta só a view ativa, então o polling vira "enquanto montado" e o estado `open` morreu com o overlay. O workspace agora resolve pela **sessão da própria aba** (`useSessions(s => s.byId[sessionId].cwd)`, kit padrão que o slot entrega junto com `useWorkspaces`) — mais preciso que o "workspace corrente" do overlay. A view usa um **store dedicado por sessão**: a regra *one handle, one scope* do slot system (postmortem de 01/09 abaixo) proíbe reusar o handle root do antigo botão/painel — entre escopos, compartilha-se por dados (`/scrum-api`), nunca por handle. `Panel.tsx` e `ScrumButton.tsx` foram apagados; a dependência nova é só de tipos (`@deepseek-ai/dsh-client-ui-conversation`, zero bytes no bundle).
+
 ## Pacotes
 
 | Pacote | Papel | ctx key |
@@ -36,7 +38,7 @@ Release
 | `packages/command-scrum` | Comando humano `/scrum` (leitura: tree, sprints, status, ceremonies, trash, archive) | registra em `ctx.commands` |
 | `packages/context-scrum` | Contexto de agente ciente do quadro: snapshot da sprint ativa injetado no 1º step do turno quando muda | listener `agent/pre-step` |
 | `packages/scrum-api` | Rotas HTTP `/scrum-api/state` e `/scrum-api/action` para o quadro web | registra em `ctx.webServer` |
-| `packages/ui-scrum` | Quadro visual na GUI web: botão na sidebar + painel (Backlog em grade estilo Azure DevOps, work item form modal, Boards multinível com drag-and-drop, Sprints, Arquivo, Lixeira) | slots `sidebar.footer.action` + `shell.overlay` |
+| `packages/ui-scrum` | Quadro visual na GUI web: aba **▦ SCRUM** no anel de views da conversa (Backlog em grade estilo Azure DevOps, work item form modal, Boards multinível com drag-and-drop, Sprints, Arquivo, Lixeira) | slot `conversation.view` |
 | `packages/bundle-scrum` | Bundle instalável (`dsh.bundle`) que insere as linhas acima sobre o perfil web | — |
 
 Regras de negócio centralizadas no `ScrumService`: pais precisam existir (e estar vivos); no máximo **uma sprint ativa**; encerrar sprint devolve tarefas não concluídas ao backlog; movimentos no board só na sprint ativa; cerimônias são append-only; exclusão de subárvore exige `cascade` e vai para a **lixeira** (restaurar com `restoreItem`, apagar de vez com `purgeItem`/`emptyTrash`); concluídos podem ir ao **arquivo** (`archiveItem`/`unarchiveItem`/`archiveCompleted`); sprints e cerimônias são história — nunca vão à lixeira, e uma release purgada apenas desvincula suas sprints.
@@ -55,7 +57,7 @@ bash scripts/setup-profile.sh  # cria o DSH_HOME hermético (.dsh-home) e o perf
 bash scripts/serve.sh 3090     # sobe a GUI web com o perfil scrum
 ```
 
-Abra `http://127.0.0.1:3090` — o botão **▦ SCRUM** fica no rodapé da sidebar. Os dados vivem em `.dsh-home/storages/scrum.json` (compartilhados entre a GUI, as tools do modelo e o `/scrum`).
+Abra `http://127.0.0.1:3090` — a aba **▦ SCRUM** fica no topo da conversa, ao lado de `Chat` e `Trajectory`. Os dados vivem em `.dsh-home/storages/scrum_ws_<hash>.json` (um quadro por workspace; compartilhados entre a GUI, as tools do modelo e o `/scrum`).
 
 O perfil `scrum` só existe neste repositório (`DSH_HOME` próprio em `.dsh-home/`): o harness aberto de qualquer outra pasta/perfil não vê nada disso.
 
@@ -65,5 +67,11 @@ O perfil `scrum` só existe neste repositório (`DSH_HOME` próprio em `.dsh-hom
 
 - **Persistência**: `defineDomain` do `@deepseek-ai/dsh-storage-domain` (tabelas zod-validadas: releases, features, components, tasks, sprints, ceremonies + contadores de id no global). Dados sobrevivem às sessões e são compartilhados entre modelo, comando e GUI.
 - **Tools**: padrão `defineTool` do `@deepseek-ai/dsh-tools`, saída textual id-first que o modelo referencia de volta (`rel-1`, `task-42`…).
-- **UI**: plugin client (`dsh.client`) no formato de factory do module loader do DSH; registra nos slots do layout via `ctx.slots.inject`; estado de visualização em um store `defineStore` compartilhado entre o botão e o painel; dados via `fetch` same-origin nas rotas do `scrum-api` (com polling enquanto o painel está aberto).
+- **UI**: plugin client (`dsh.client`) no formato de factory do module loader do DSH; registra a aba no anel `conversation.view` via `ctx.slots.inject`; estado de visualização em um store `defineStore` de escopo de sessão (uma instância por sessão); dados via `fetch` same-origin nas rotas do `scrum-api` (com polling enquanto a aba está montada).
 - **Instalação**: `packages/bundle-scrum` declara `"dsh": {"bundle": {"patch": "./cordis.patch.yml"}}` — o mecanismo oficial de patch-layer de perfis do DSH (`dsh plugin --profile <nome> add <pacote>` num DSH instalado; aqui, o perfil é montado por `scripts/setup-profile.sh` com symlinks).
+
+## Postmortem: "Failed to load plugins" na aba ▦ SCRUM (01/09)
+
+Ao registrar a aba **▦ SCRUM** no ring de views da conversa (`conversation.view`, junto de Chat e Trajectory), a GUI caiu inteira com `Failed to load plugins — @scrum-harness/ui: store handle mounted under "sidebar.footer.action" (scope "root") is already mounted under scope "session"`. Causa raiz: o `apply` passava o **mesmo** handle de `createScrumStore()` para o botão/painel (slots `sidebar.footer.action` + `shell.overlay`, escopo `root`) e para a aba nova (escopo `session`) — e o slot system do DSH exige **one handle, one scope**: o registro seguinte ao primeiro mount lança, e o loader derruba o plugin inteiro. Conserto: um `viewStore = createScrumStore()` dedicado ao registro da aba (instância por sessão). Compartilhar um handle entre slots continua certo **dentro do mesmo escopo** (botão ↔ painel); entre escopos, compartilhe por dados — ambos os lados consultam o mesmo `/scrum-api`, que é o que o polling já faz.
+
+Armadilha que mascarou o diagnóstico: um `node` antigo segurando a porta 3090 — `serve.sh` novos morriam em `EADDRINUSE`, e o processo velho rodava os halves de host de antes do rebuild enquanto entregava o `client.js` novo do disco. Depois de rebuildar, derrube o servidor antigo antes de subir outro (`lsof -nP -iTCP:3090 -sTCP:LISTEN` mostra quem segura a porta).

@@ -11,25 +11,13 @@
 
 /** The whole board stylesheet. */
 export const SCRUM_CSS = `
-.scrum-fab {
-  display: flex; align-items: center; gap: 8px;
-  width: 100%; border: none; background: transparent; cursor: pointer;
-  padding: 8px 10px; border-radius: 8px; font-size: 13px; color: inherit;
-}
-.scrum-fab:hover { background: rgba(125, 125, 140, 0.15); }
-.scrum-fab .scrum-fab-glyph { font-size: 15px; line-height: 1; }
-
-.scrum-overlay {
-  position: fixed; inset: 0; z-index: 900;
-  background: rgba(15, 16, 20, 0.55);
-  display: flex; align-items: center; justify-content: center;
-}
+/* The conversation-view seat: the panel fills the shell's flex viewArea
+   inline (v0.9 retired the fixed overlay + sidebar button). */
+.scrum-view { display: flex; flex: 1; min-height: 0; }
 .scrum-panel {
-  width: min(1180px, 94vw); height: min(780px, 92vh);
+  width: 100%; height: 100%;
   background: var(--bgColor-inset, #f6f7f9); color: var(--fgColor-default, #1d1f24);
-  border-radius: var(--borderRadius-large, 14px);
   font-family: var(--fontStack-system, system-ui, sans-serif);
-  box-shadow: var(--shadow-floating-xlarge, 0 24px 64px rgba(0,0,0,0.35));
   display: flex; flex-direction: column; overflow: hidden;
   font-size: 13px;
 }
