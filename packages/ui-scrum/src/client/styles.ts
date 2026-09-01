@@ -327,7 +327,7 @@ button.scrum-chev:hover { background: var(--bgColor-neutral-muted, rgba(70, 90, 
   border: none; background: transparent; cursor: pointer;
   padding: 4px 12px; border-radius: var(--borderRadius-medium, 7px); font-size: 12px; color: var(--fgColor-muted, #4b5265);
 }
-.scrum-pivot-btn:hover { background: rgba(255,255,255,0.7); }
+.scrum-pivot-btn:hover { background: var(--button-invisible-bgColor-hover, rgba(255,255,255,0.7)); }
 .scrum-pivot-btn.is-active {
   background: var(--bgColor-default, #fff); color: var(--fgColor-default, #1d1f24); font-weight: 600;
   box-shadow: var(--shadow-resting-xsmall, 0 1px 2px rgba(20,24,40,0.15));

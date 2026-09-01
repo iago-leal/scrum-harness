@@ -1,7 +1,7 @@
 /**
- * Viewing store of the SCRUM board: the active section and the last fetched
- * wire state. Module exports the factory only; apply creates the handle of
- * the view-ring registration.
+ * Viewing store of the SCRUM board: the active section, the last fetched
+ * wire state, and the color theme. Module exports the factory only; apply
+ * creates the handle of the view-ring registration.
  * @module @scrum-harness/ui/client/store
  */
 
@@ -13,6 +13,21 @@ export type ScrumView = 'backlog' | 'board' | 'sprints' | 'archive' | 'trash'
 
 /** Backlog levels the Board section can pivot to (Azure-style level boards). */
 export type BoardLevel = 'task' | 'component' | 'feature'
+
+/** Color themes of the panel (Primer light/dark token sets). */
+export type ScrumTheme = 'light' | 'dark'
+
+/** localStorage key persisting the chosen theme across sessions. */
+export const THEME_KEY = 'scrum-theme'
+
+/** Read the persisted theme (defaults to light; storage may be unavailable). */
+function savedTheme(): ScrumTheme {
+  try {
+    return localStorage.getItem(THEME_KEY) === 'dark' ? 'dark' : 'light'
+  } catch {
+    return 'light'
+  }
+}
 
 /** Board viewing state. */
 export interface ScrumViewState {
@@ -32,6 +47,8 @@ export interface ScrumViewState {
   boardLevel: BoardLevel
   /** Whether the task board groups cards into swimlanes per component. */
   swimlanes: boolean
+  /** Active color theme (persisted in localStorage by the toggle). */
+  theme: ScrumTheme
 }
 
 /**
@@ -49,6 +66,7 @@ export type ScrumViewActions = {
   setSelected: (draft: ScrumViewState, selected: string | null) => void
   setBoardLevel: (draft: ScrumViewState, level: BoardLevel) => void
   setSwimlanes: (draft: ScrumViewState, on: boolean) => void
+  setTheme: (draft: ScrumViewState, theme: ScrumTheme) => void
 }
 
 /**
@@ -60,6 +78,7 @@ export function createScrumStore(): EngineStoreHandle<ScrumViewState, ScrumViewA
     init: (): ScrumViewState => ({
       view: 'backlog', data: null, error: null, busy: false,
       collapsed: {}, selected: null, boardLevel: 'task', swimlanes: true,
+      theme: savedTheme(),
     }),
     actions: {
       setView: (d, view: ScrumView) => { d.view = view },
@@ -74,6 +93,7 @@ export function createScrumStore(): EngineStoreHandle<ScrumViewState, ScrumViewA
       setSelected: (d, selected: string | null) => { d.selected = selected },
       setBoardLevel: (d, level: BoardLevel) => { d.boardLevel = level },
       setSwimlanes: (d, on: boolean) => { d.swimlanes = on },
+      setTheme: (d, theme: ScrumTheme) => { d.theme = theme },
     },
   })
 }

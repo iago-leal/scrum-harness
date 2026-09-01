@@ -15,6 +15,7 @@ import type { PropsRuntime, PropsStore } from '@deepseek-ai/dsh-client-ui-slots'
 import type {} from '@deepseek-ai/dsh-client-ui-conversation/client'
 import type { createScrumStore } from './store.ts'
 import type { BoardLevel, ScrumView as SectionView } from './store.ts'
+import { THEME_KEY } from './store.ts'
 import { Board } from './Board.tsx'
 import { resolveNode, WorkItemForm } from './Details.tsx'
 import { Shelf } from './Shelf.tsx'
@@ -63,7 +64,15 @@ export function ScrumView(props: ScrumViewProps) {
   const selected = props.useStore(s => s.selected)
   const boardLevel = props.useStore(s => s.boardLevel)
   const swimlanes = props.useStore(s => s.swimlanes)
+  const theme = props.useStore(s => s.theme)
   const { refresh, sessionId } = props
+
+  /** Flip the color theme and persist the choice (storage may be unavailable). */
+  const toggleTheme = () => {
+    const next = theme === 'light' ? 'dark' : 'light'
+    props.actions.setTheme(next)
+    try { localStorage.setItem(THEME_KEY, next) } catch { /* keep the in-memory flip */ }
+  }
 
   // The board this tab shows: its own session's workspace, then the most
   // recent workspace, then the global fallback board.
@@ -113,9 +122,11 @@ export function ScrumView(props: ScrumViewProps) {
   return (
     <div
       className="scrum-view"
-      // Activates (and scopes) the Primer color theme of primer.ts.
-      data-color-mode="light"
+      // Activates (and scopes) the Primer color theme of primer.ts: both
+      // theme attributes stay set; data-color-mode picks which one lights up.
+      data-color-mode={theme}
       data-light-theme="light"
+      data-dark-theme="dark"
     >
       <div className="scrum-panel">
         <div className="scrum-head">
@@ -135,6 +146,11 @@ export function ScrumView(props: ScrumViewProps) {
             ))}
           </div>
           <span className="scrum-spacer" />
+          <button
+            className="scrum-tab"
+            title={theme === 'light' ? 'Tema escuro' : 'Tema claro'}
+            onClick={toggleTheme}
+          >{theme === 'light' ? '🌙' : '☀️'}</button>
           <button className="scrum-tab" title="Atualizar" onClick={() => { refresh(wsPath) }}>⟳</button>
         </div>
         {error !== null && <div className="scrum-error">{error}</div>}

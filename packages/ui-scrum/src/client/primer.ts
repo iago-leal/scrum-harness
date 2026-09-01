@@ -8,10 +8,10 @@
  *
  * Scoping: base/size/typography tokens ship on `:root`, which would leak into
  * the host GUI, so they are re-scoped to the panel roots here at module init
- * (a one-time string replace on bundled text). The color theme ships behind
- * `[data-color-mode]`/`[data-light-theme]` selectors; the view root carries
- * those attributes itself (see ScrumView.tsx), which both activates the
- * theme and keeps it scoped — and leaves dark mode one attribute away.
+ * (a one-time string replace on bundled text). The color themes (light AND
+ * dark since v0.10) ship behind `[data-color-mode]`/`[data-*-theme]`
+ * selectors; the view root carries those attributes itself (see
+ * ScrumView.tsx), which both activates the chosen theme and keeps it scoped.
  * @module @scrum-harness/ui/client/primer
  */
 
@@ -21,6 +21,7 @@ import space from '@primer/primitives/dist/css/functional/spacing/space.css'
 import typography from '@primer/primitives/dist/css/functional/typography/typography.css'
 import radius from '@primer/primitives/dist/css/functional/size/radius.css'
 import border from '@primer/primitives/dist/css/functional/size/border.css'
+import themeDark from '@primer/primitives/dist/css/functional/themes/dark.css'
 import themeLight from '@primer/primitives/dist/css/functional/themes/light.css'
 
 /** Selector list of the SCRUM surfaces that host the tokens. */
@@ -29,5 +30,7 @@ const SCOPE = '.scrum-view, .scrum-wi-overlay'
 /** The whole Primer token sheet, scoped to the SCRUM panel. */
 export const PRIMER_CSS = [baseSize, baseTypography, space, typography, radius, border]
   .map(sheet => sheet.replaceAll(':root', SCOPE))
-  .concat(themeLight)
+  // Both color themes ride along; the view root's data-color-mode /
+  // data-*-theme attributes pick which one lights up (see ScrumView.tsx).
+  .concat(themeLight, themeDark)
   .join('\n')
