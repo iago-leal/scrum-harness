@@ -11,6 +11,7 @@ import {
   BOARD_COLUMNS,
   CEREMONY_TYPES,
   formatCeremonies,
+  formatShelf,
   formatSprints,
   formatSprintStatus,
   formatTree,
@@ -38,7 +39,18 @@ const TEXT_OUTPUT = {
  * @param ctx - registrant context carrying the tool registry and scrum service.
  */
 export function apply(ctx: Context): void {
-  const scrum = () => ctx.scrum
+  /**
+   * Structural view of the tool run context (agent → session → header.cwd),
+   * dependency-free on purpose: the Agent type lives in a host-only package.
+   */
+  interface ExecLike { agent?: { session: { header: { cwd?: string } } } }
+
+  /**
+   * Resolve the calling session's board: its workspace cwd selects the
+   * per-workspace domain; a session without cwd shares the global board.
+   */
+  const boardOf = (exec: unknown) =>
+    ctx.scrum.board((exec as ExecLike).agent?.session.header.cwd)
 
   ctx.tools.register(defineTool({
     name: 'scrum_tree',
@@ -48,9 +60,10 @@ export function apply(ctx: Context): void {
       + 'Call this first to orient yourself before creating or changing items.',
     parameters: {},
     output: TEXT_OUTPUT,
-    execute() {
-      const sprints = scrum().sprints()
-      const text = `${formatTree(scrum().tree(), sprints)}\n\nSprints:\n${formatSprints(sprints, scrum().releaseNames())}`
+    async execute(_args, exec) {
+      const board = await boardOf(exec)
+      const sprints = board.sprints()
+      const text = `${formatTree(board.tree(), sprints)}\n\nSprints:\n${formatSprints(sprints, board.releaseNames())}`
       return Promise.resolve({ text })
     },
     presentCall: () => ({ card: 'generic', title: 'Read SCRUM tree', kind: 'read' }),
@@ -65,8 +78,9 @@ export function apply(ctx: Context): void {
       targetDate: { type: 'string', description: 'Target date, ISO format (YYYY-MM-DD).' },
     },
     output: TEXT_OUTPUT,
-    async execute(args) {
-      const release = await scrum().createRelease(args)
+    async execute(args, exec) {
+      const board = await boardOf(exec)
+      const release = await board.createRelease(args)
       return { text: `Created release ${release.id} "${release.name}" [${release.status}].` }
     },
     presentCall: args => ({ card: 'generic', title: `Create release "${args.name}"`, kind: 'edit' }),
@@ -81,8 +95,9 @@ export function apply(ctx: Context): void {
       description: { type: 'string' },
     },
     output: TEXT_OUTPUT,
-    async execute(args) {
-      const feature = await scrum().createFeature(args)
+    async execute(args, exec) {
+      const board = await boardOf(exec)
+      const feature = await board.createFeature(args)
       return { text: `Created feature ${feature.id} "${feature.title}" under ${feature.releaseId}.` }
     },
     presentCall: args => ({ card: 'generic', title: `Create feature "${args.title}"`, kind: 'edit' }),
@@ -97,8 +112,9 @@ export function apply(ctx: Context): void {
       description: { type: 'string' },
     },
     output: TEXT_OUTPUT,
-    async execute(args) {
-      const component = await scrum().createComponent(args)
+    async execute(args, exec) {
+      const board = await boardOf(exec)
+      const component = await board.createComponent(args)
       return { text: `Created component ${component.id} "${component.title}" under ${component.featureId}.` }
     },
     presentCall: args => ({ card: 'generic', title: `Create component "${args.title}"`, kind: 'edit' }),
@@ -114,8 +130,9 @@ export function apply(ctx: Context): void {
       estimate: { type: 'number', description: 'Story points (relative estimation).' },
     },
     output: TEXT_OUTPUT,
-    async execute(args) {
-      const task = await scrum().createTask(args)
+    async execute(args, exec) {
+      const board = await boardOf(exec)
+      const task = await board.createTask(args)
       const points = task.estimate === undefined ? '' : ` (${task.estimate}pt)`
       return { text: `Created task ${task.id} "${task.title}"${points} under ${task.componentId}.` }
     },
@@ -126,22 +143,35 @@ export function apply(ctx: Context): void {
     name: 'scrum_item_update',
     description:
       'Update fields of any SCRUM item by id. The id prefix selects the level: '
-      + 'rel- (title→name, targetDate, status: planned|active|released), feat- (title, status: proposed|committed|done), '
-      + 'comp- (title), task- (title, estimate), spr- (goal, releaseId — empty string unlinks). Description applies to all except sprints.',
+      + 'rel- (title→name, targetDate, status: planned|active|released), feat- (title, status: proposed|committed|in_progress|done), '
+      + 'comp- (title, status: proposed|in_progress|done), task- (title, estimate), spr- (goal, releaseId — empty string unlinks, '
+      + 'wipLimits). Description applies to all except sprints.',
     parameters: {
       id: { type: 'string', required: true },
       title: { type: 'string', description: 'New title / release name.' },
       description: { type: 'string' },
       estimate: { type: 'number', description: 'Tasks only.' },
       targetDate: { type: 'string', description: 'Releases only (ISO date).' },
-      status: { type: 'string', description: 'Releases and features only.' },
+      status: { type: 'string', description: 'Releases, features and components (each level has its own workflow).' },
       goal: { type: 'string', description: 'Sprints only.' },
       releaseId: { type: 'string', description: 'Sprints only: link to a release (rel-N); empty string removes the link.' },
+      wipLimits: {
+        type: 'object',
+        description: 'Sprints only: REPLACE the per-column WIP limits of the board, e.g. {"in_progress": 3}. A value of 0 drops that column\'s limit; {} removes them all.',
+        additionalProperties: false,
+        properties: {
+          todo: { type: 'number' },
+          in_progress: { type: 'number' },
+          review: { type: 'number' },
+          done: { type: 'number' },
+        },
+      },
     },
     output: TEXT_OUTPUT,
-    async execute(args) {
+    async execute(args, exec) {
+      const board = await boardOf(exec)
       const { id, ...patch } = args
-      await scrum().updateItem(id, patch)
+      await board.updateItem(id, patch as Parameters<typeof board.updateItem>[1])
       return { text: `Updated ${id}.` }
     },
     presentCall: args => ({ card: 'generic', title: `Update ${args.id}`, kind: 'edit' }),
@@ -150,19 +180,145 @@ export function apply(ctx: Context): void {
   ctx.tools.register(defineTool({
     name: 'scrum_item_delete',
     description:
-      'Delete a release, feature, component or task by id. A parent with children is refused '
-      + 'unless cascade is true (then the whole subtree goes). Sprints and ceremonies are history and cannot be deleted; '
-      + 'a task inside the active sprint must be moved out first.',
+      'Move a release, feature, component or task to the TRASH (soft delete: restorable with scrum_item_restore, '
+      + 'definitive only via scrum_item_purge / scrum_trash_empty). A parent with live descendants is refused unless '
+      + 'cascade is true (then the whole subtree is trashed together). Sprints and ceremonies are history and cannot '
+      + 'be deleted; a task inside the active sprint must be moved out first.',
     parameters: {
       id: { type: 'string', required: true },
-      cascade: { type: 'boolean', description: 'Also delete every descendant. Defaults to false.' },
+      cascade: { type: 'boolean', description: 'Also trash every live descendant. Defaults to false.' },
     },
     output: TEXT_OUTPUT,
-    async execute(args) {
-      const deleted = await scrum().deleteItem(args.id, args.cascade ?? false)
-      return { text: `Deleted: ${deleted.join(', ')}.` }
+    async execute(args, exec) {
+      const board = await boardOf(exec)
+      const trashed = await board.deleteItem(args.id, args.cascade ?? false)
+      return { text: `Moved to trash: ${trashed.join(', ')}. Restore with scrum_item_restore; purge to delete forever.` }
     },
-    presentCall: args => ({ card: 'generic', title: `Delete ${args.id}`, kind: 'delete' }),
+    presentCall: args => ({ card: 'generic', title: `Trash ${args.id}`, kind: 'delete' }),
+  }))
+
+  ctx.tools.register(defineTool({
+    name: 'scrum_trash_list',
+    description:
+      'List the TRASH: soft-deleted releases/features/components/tasks, newest deletion first. '
+      + 'Each line carries the id used by scrum_item_restore (bring back) and scrum_item_purge (delete forever).',
+    parameters: {},
+    output: TEXT_OUTPUT,
+    async execute(_args, exec) {
+      const board = await boardOf(exec)
+      return Promise.resolve({ text: formatShelf(board.trash(), 'trash') })
+    },
+    presentCall: () => ({ card: 'generic', title: 'List trash', kind: 'read' }),
+  }))
+
+  ctx.tools.register(defineTool({
+    name: 'scrum_item_restore',
+    description:
+      'Restore one item from the TRASH back to the live backlog. Shelved ancestors are revived too, and so are the '
+      + 'descendants trashed by the same delete operation.',
+    parameters: {
+      id: { type: 'string', required: true, description: 'Id of a trashed item (see scrum_trash_list).' },
+    },
+    output: TEXT_OUTPUT,
+    async execute(args, exec) {
+      const board = await boardOf(exec)
+      const restored = await board.restoreItem(args.id)
+      return { text: `Restored: ${restored.join(', ')}.` }
+    },
+    presentCall: args => ({ card: 'generic', title: `Restore ${args.id}`, kind: 'edit' }),
+  }))
+
+  ctx.tools.register(defineTool({
+    name: 'scrum_item_purge',
+    description:
+      'PERMANENTLY delete one trashed item (and its trashed subtree). Only works on items already in the trash — '
+      + 'there is no way back. Sprints survive a purged release; they only lose the link.',
+    parameters: {
+      id: { type: 'string', required: true, description: 'Id of a trashed item (see scrum_trash_list).' },
+    },
+    output: TEXT_OUTPUT,
+    async execute(args, exec) {
+      const board = await boardOf(exec)
+      const purged = await board.purgeItem(args.id)
+      return { text: `Purged forever: ${purged.join(', ')}.` }
+    },
+    presentCall: args => ({ card: 'generic', title: `Purge ${args.id} (permanent)`, kind: 'delete' }),
+  }))
+
+  ctx.tools.register(defineTool({
+    name: 'scrum_trash_empty',
+    description: 'PERMANENTLY delete everything in the TRASH. There is no way back.',
+    parameters: {},
+    output: TEXT_OUTPUT,
+    async execute(_args, exec) {
+      const board = await boardOf(exec)
+      const purged = await board.emptyTrash()
+      return { text: purged.length === 0 ? 'The trash was already empty.' : `Trash emptied; purged forever: ${purged.join(', ')}.` }
+    },
+    presentCall: () => ({ card: 'generic', title: 'Empty trash (permanent)', kind: 'delete' }),
+  }))
+
+  ctx.tools.register(defineTool({
+    name: 'scrum_archive_list',
+    description:
+      'List the ARCHIVE: concluded items stowed away from the main views, newest first. '
+      + 'Bring one back with scrum_item_unarchive.',
+    parameters: {},
+    output: TEXT_OUTPUT,
+    async execute(_args, exec) {
+      const board = await boardOf(exec)
+      return Promise.resolve({ text: formatShelf(board.archive(), 'archive') })
+    },
+    presentCall: () => ({ card: 'generic', title: 'List archive', kind: 'read' }),
+  }))
+
+  ctx.tools.register(defineTool({
+    name: 'scrum_item_archive',
+    description:
+      'ARCHIVE one item and its live subtree: concluded work leaves the main views but stays restorable and keeps '
+      + 'counting in completed-sprint totals. Tasks in the active sprint cannot be archived.',
+    parameters: {
+      id: { type: 'string', required: true },
+    },
+    output: TEXT_OUTPUT,
+    async execute(args, exec) {
+      const board = await boardOf(exec)
+      const archived = await board.archiveItem(args.id)
+      return { text: `Archived: ${archived.join(', ')}. Bring back with scrum_item_unarchive.` }
+    },
+    presentCall: args => ({ card: 'generic', title: `Archive ${args.id}`, kind: 'edit' }),
+  }))
+
+  ctx.tools.register(defineTool({
+    name: 'scrum_item_unarchive',
+    description:
+      'Bring one item back from the ARCHIVE to the live views (revives shelved ancestors and the items archived '
+      + 'together with it).',
+    parameters: {
+      id: { type: 'string', required: true, description: 'Id of an archived item (see scrum_archive_list).' },
+    },
+    output: TEXT_OUTPUT,
+    async execute(args, exec) {
+      const board = await boardOf(exec)
+      const revived = await board.unarchiveItem(args.id)
+      return { text: `Unarchived: ${revived.join(', ')}.` }
+    },
+    presentCall: args => ({ card: 'generic', title: `Unarchive ${args.id}`, kind: 'edit' }),
+  }))
+
+  ctx.tools.register(defineTool({
+    name: 'scrum_archive_completed',
+    description:
+      'Batch shortcut: archive every DONE task that is not on the active board (its sprint completed or none). '
+      + 'Features and releases are archived explicitly with scrum_item_archive.',
+    parameters: {},
+    output: TEXT_OUTPUT,
+    async execute(_args, exec) {
+      const board = await boardOf(exec)
+      const archived = await board.archiveCompleted()
+      return { text: archived.length === 0 ? 'Nothing to archive: no concluded tasks outside the active sprint.' : `Archived completed tasks: ${archived.join(', ')}.` }
+    },
+    presentCall: () => ({ card: 'generic', title: 'Archive completed tasks', kind: 'edit' }),
   }))
 
   ctx.tools.register(defineTool({
@@ -182,8 +338,9 @@ export function apply(ctx: Context): void {
       },
     },
     output: TEXT_OUTPUT,
-    async execute(args) {
-      const sprint = await scrum().planSprint(args)
+    async execute(args, exec) {
+      const board = await boardOf(exec)
+      const sprint = await board.planSprint(args)
       const selected = args.taskIds === undefined || args.taskIds.length === 0
         ? '' : ` with ${args.taskIds.length} task(s)`
       const linked = sprint.releaseId === undefined ? '' : ` for ${sprint.releaseId}`
@@ -201,8 +358,9 @@ export function apply(ctx: Context): void {
       direction: { type: 'string', required: true, enum: ['add', 'remove'] },
     },
     output: TEXT_OUTPUT,
-    async execute(args) {
-      const task = await scrum().assignTask(args.sprintId, args.taskId, args.direction as 'add' | 'remove')
+    async execute(args, exec) {
+      const board = await boardOf(exec)
+      const task = await board.assignTask(args.sprintId, args.taskId, args.direction as 'add' | 'remove')
       return {
         text: args.direction === 'add'
           ? `Task ${task.id} added to ${args.sprintId} (todo).`
@@ -219,8 +377,9 @@ export function apply(ctx: Context): void {
       sprintId: { type: 'string', required: true },
     },
     output: TEXT_OUTPUT,
-    async execute(args) {
-      const sprint = await scrum().startSprint(args.sprintId)
+    async execute(args, exec) {
+      const board = await boardOf(exec)
+      const sprint = await board.startSprint(args.sprintId)
       return { text: `Sprint ${sprint.id} #${sprint.number} "${sprint.goal}" is now active.` }
     },
     presentCall: args => ({ card: 'generic', title: `Start sprint ${args.sprintId}`, kind: 'edit' }),
@@ -235,8 +394,9 @@ export function apply(ctx: Context): void {
       sprintId: { type: 'string', description: 'Defaults to the active sprint.' },
     },
     output: TEXT_OUTPUT,
-    async execute(args) {
-      const { sprint, returnedToBacklog } = await scrum().endSprint(args.sprintId)
+    async execute(args, exec) {
+      const board = await boardOf(exec)
+      const { sprint, returnedToBacklog } = await board.endSprint(args.sprintId)
       const returned = returnedToBacklog.length === 0
         ? 'all tasks were done'
         : `returned to backlog: ${returnedToBacklog.join(', ')}`
@@ -252,8 +412,9 @@ export function apply(ctx: Context): void {
       sprintId: { type: 'string', description: 'Defaults to the active sprint.' },
     },
     output: TEXT_OUTPUT,
-    execute(args) {
-      return Promise.resolve({ text: formatSprintStatus(scrum().sprintStatus(args.sprintId), scrum().releaseNames()) })
+    async execute(args, exec) {
+      const board = await boardOf(exec)
+      return Promise.resolve({ text: formatSprintStatus(board.sprintStatus(args.sprintId), board.releaseNames()) })
     },
     presentCall: () => ({ card: 'generic', title: 'Sprint status', kind: 'read' }),
   }))
@@ -266,8 +427,9 @@ export function apply(ctx: Context): void {
       column: { type: 'string', required: true, enum: [...BOARD_COLUMNS] },
     },
     output: TEXT_OUTPUT,
-    async execute(args) {
-      const task = await scrum().moveTask(args.taskId, args.column)
+    async execute(args, exec) {
+      const board = await boardOf(exec)
+      const task = await board.moveTask(args.taskId, args.column)
       return { text: `Task ${task.id} → ${task.status}.` }
     },
     presentCall: args => ({ card: 'generic', title: `Move ${args.taskId} → ${args.column}`, kind: 'edit' }),
@@ -296,8 +458,9 @@ export function apply(ctx: Context): void {
       },
     },
     output: TEXT_OUTPUT,
-    async execute(args) {
-      const ceremony = await scrum().recordCeremony({
+    async execute(args, exec) {
+      const board = await boardOf(exec)
+      const ceremony = await board.recordCeremony({
         type: args.type as (typeof CEREMONY_TYPES)[number],
         sprintId: args.sprintId,
         author: args.author,
@@ -315,8 +478,9 @@ export function apply(ctx: Context): void {
       sprintId: { type: 'string', description: 'Restrict to one sprint.' },
     },
     output: TEXT_OUTPUT,
-    execute(args) {
-      return Promise.resolve({ text: formatCeremonies(scrum().ceremonies(args.sprintId)) })
+    async execute(args, exec) {
+      const board = await boardOf(exec)
+      return Promise.resolve({ text: formatCeremonies(board.ceremonies(args.sprintId)) })
     },
     presentCall: () => ({ card: 'generic', title: 'List ceremonies', kind: 'read' }),
   }))

@@ -10,7 +10,10 @@ import { defineStore, type EngineStoreHandle } from '@deepseek-ai/dsh-client-run
 import type { ScrumState } from './api.ts'
 
 /** Panel sections. */
-export type ScrumView = 'backlog' | 'board' | 'sprints'
+export type ScrumView = 'backlog' | 'board' | 'sprints' | 'archive' | 'trash'
+
+/** Backlog levels the Board section can pivot to (Azure-style level boards). */
+export type BoardLevel = 'task' | 'component' | 'feature'
 
 /** Board viewing state. */
 export interface ScrumViewState {
@@ -24,6 +27,14 @@ export interface ScrumViewState {
   error: string | null
   /** Whether a fetch/mutation is in flight. */
   busy: boolean
+  /** Backlog nodes explicitly collapsed (default: everything expanded). */
+  collapsed: Record<string, boolean>
+  /** Item open in the work item form modal; null when closed. */
+  selected: string | null
+  /** Which backlog level the Board section shows. */
+  boardLevel: BoardLevel
+  /** Whether the task board groups cards into swimlanes per component. */
+  swimlanes: boolean
 }
 
 /**
@@ -37,6 +48,11 @@ export type ScrumViewActions = {
   setData: (draft: ScrumViewState, data: ScrumState) => void
   setError: (draft: ScrumViewState, error: string | null) => void
   setBusy: (draft: ScrumViewState, busy: boolean) => void
+  toggleNode: (draft: ScrumViewState, id: string) => void
+  setCollapsed: (draft: ScrumViewState, collapsed: Record<string, boolean>) => void
+  setSelected: (draft: ScrumViewState, selected: string | null) => void
+  setBoardLevel: (draft: ScrumViewState, level: BoardLevel) => void
+  setSwimlanes: (draft: ScrumViewState, on: boolean) => void
 }
 
 /**
@@ -45,13 +61,24 @@ export type ScrumViewActions = {
  */
 export function createScrumStore(): EngineStoreHandle<ScrumViewState, ScrumViewActions> {
   return defineStore({
-    init: (): ScrumViewState => ({ open: false, view: 'backlog', data: null, error: null, busy: false }),
+    init: (): ScrumViewState => ({
+      open: false, view: 'backlog', data: null, error: null, busy: false,
+      collapsed: {}, selected: null, boardLevel: 'task', swimlanes: true,
+    }),
     actions: {
       setOpen: (d, open: boolean) => { d.open = open },
       setView: (d, view: ScrumView) => { d.view = view },
       setData: (d, data: ScrumState) => { d.data = data; d.error = null },
       setError: (d, error: string | null) => { d.error = error },
       setBusy: (d, busy: boolean) => { d.busy = busy },
+      toggleNode: (d, id: string) => {
+        if (d.collapsed[id] === true) delete d.collapsed[id]
+        else d.collapsed[id] = true
+      },
+      setCollapsed: (d, collapsed: Record<string, boolean>) => { d.collapsed = collapsed },
+      setSelected: (d, selected: string | null) => { d.selected = selected },
+      setBoardLevel: (d, level: BoardLevel) => { d.boardLevel = level },
+      setSwimlanes: (d, on: boolean) => { d.swimlanes = on },
     },
   })
 }

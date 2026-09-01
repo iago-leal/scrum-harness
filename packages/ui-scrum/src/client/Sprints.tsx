@@ -5,7 +5,9 @@
  */
 
 import { useState } from 'react'
-import type { ScrumState, WireCeremony, WireRelease, WireSprint, WireTask } from './api.ts'
+import type { ScrumState, WireCeremony, WireRelease, WireSprint, WireSprintStats, WireTask } from './api.ts'
+import { Burndown, Velocity } from './Charts.tsx'
+import { StateDot } from './meta.tsx'
 
 /** Minimal release option for the link selectors. */
 type ReleaseOption = Pick<WireRelease, 'id' | 'name'>
@@ -102,10 +104,12 @@ function ReleaseLink(props: {
   )
 }
 
-/** One sprint card with progress, actions and its ceremonies. */
+/** One sprint card with progress, burndown, actions and its ceremonies. */
 function SprintCard(props: {
   sprint: WireSprint
   tasks: WireTask[]
+  /** Chart data of this sprint (includes archived done tasks). */
+  stats?: WireSprintStats
   ceremonies: WireCeremony[]
   releases: ReleaseOption[]
   hasActive: boolean
@@ -113,11 +117,16 @@ function SprintCard(props: {
 }) {
   const [recording, setRecording] = useState(false)
   const [showCeremonies, setShowCeremonies] = useState(false)
+  const [showBurndown, setShowBurndown] = useState(false)
   const { sprint, tasks } = props
-  const done = tasks.filter(t => t.status === 'done').length
-  const points = tasks.reduce((sum, t) => sum + (t.estimate ?? 0), 0)
-  const pointsDone = tasks.filter(t => t.status === 'done').reduce((sum, t) => sum + (t.estimate ?? 0), 0)
-  const percent = tasks.length === 0 ? 0 : Math.round((done / tasks.length) * 100)
+  // Prefer server stats: they keep counting archived done tasks.
+  const totals = props.stats?.totals ?? {
+    tasks: tasks.length,
+    done: tasks.filter(t => t.status === 'done').length,
+    points: tasks.reduce((sum, t) => sum + (t.estimate ?? 0), 0),
+    pointsDone: tasks.filter(t => t.status === 'done').reduce((sum, t) => sum + (t.estimate ?? 0), 0),
+  }
+  const percent = totals.tasks === 0 ? 0 : Math.round((totals.done / totals.tasks) * 100)
   const window = [sprint.startDate?.slice(0, 10), sprint.endDate?.slice(0, 10)].filter(Boolean).join(' → ')
 
   return (
@@ -125,10 +134,15 @@ function SprintCard(props: {
       <div className="scrum-sprint-head">
         <span className="scrum-id">{sprint.id}</span>
         <span className="scrum-goal">#{sprint.number} {sprint.goal}</span>
-        <span className={`scrum-badge st-${sprint.status}`}>{sprint.status}</span>
+        <StateDot status={sprint.status} />
         <ReleaseLink sprint={sprint} releases={props.releases} onRun={props.onRun} />
         {window.length > 0 && <span className="scrum-muted">{window}</span>}
         <span style={{ flex: 1 }} />
+        {sprint.startDate !== undefined && totals.points > 0 && (
+          <button className="scrum-btn ghost" onClick={() => { setShowBurndown(s => !s) }}>
+            {showBurndown ? '▾' : '▸'} 📉 Burndown
+          </button>
+        )}
         {sprint.status === 'planned' && !props.hasActive && (
           <button className="scrum-btn primary" onClick={() => { props.onRun({ action: 'startSprint', sprintId: sprint.id }) }}>Iniciar sprint</button>
         )}
@@ -139,15 +153,16 @@ function SprintCard(props: {
           </>
         )}
       </div>
-      {tasks.length > 0 && (
+      {totals.tasks > 0 && (
         <>
           <div className="scrum-progress"><div style={{ width: `${percent}%` }} /></div>
           <div className="scrum-muted">
-            {done}/{tasks.length} tarefas concluídas · {pointsDone}/{points} pontos
+            {totals.done}/{totals.tasks} tarefas concluídas · {totals.pointsDone}/{totals.points} pontos
           </div>
         </>
       )}
-      {sprint.status === 'planned' && tasks.length === 0 && (
+      {showBurndown && <Burndown sprint={sprint} stats={props.stats} />}
+      {sprint.status === 'planned' && totals.tasks === 0 && (
         <div className="scrum-muted">Sem tarefas: selecione tarefas do backlog (botão «→ {sprint.id}» na aba Backlog).</div>
       )}
       {recording && <CeremonyForm sprintId={sprint.id} onRun={props.onRun} onClose={() => { setRecording(false) }} />}
@@ -186,6 +201,7 @@ export function Sprints(props: { state: ScrumState; callbacks: SprintsCallbacks 
     .flatMap(f => f.components)
     .flatMap(c => c.tasks)
   const hasActive = props.state.activeSprintId !== null
+  const stats = props.state.stats ?? []
 
   return (
     <div>
@@ -195,6 +211,7 @@ export function Sprints(props: { state: ScrumState; callbacks: SprintsCallbacks 
         <span style={{ flex: 1 }} />
         <button className="scrum-btn primary" onClick={() => { setPlanning(p => !p) }}>+ Planejar sprint</button>
       </div>
+      <Velocity sprints={props.state.sprints} stats={stats} />
       {planning && (
         <div className="scrum-form" style={{ marginLeft: 0 }}>
           <PlanForm
@@ -220,6 +237,7 @@ export function Sprints(props: { state: ScrumState; callbacks: SprintsCallbacks 
             key={sprint.id}
             sprint={sprint}
             tasks={allTasks.filter(t => t.sprintId === sprint.id)}
+            stats={stats.find(s => s.sprintId === sprint.id)}
             ceremonies={props.state.ceremonies.filter(c => c.sprintId === sprint.id)}
             releases={props.state.tree.releases}
             hasActive={hasActive}

@@ -16,6 +16,11 @@
     - id: command-scrum
       name: '@scrum-harness/command-scrum'
 
+    # Board-aware agent context: waits for agents+scrum and injects the
+    # active-sprint snapshot at the first step of each turn (when changed).
+    - id: context-scrum
+      name: '@scrum-harness/context-scrum'
+
     - id: scrum-api
       name: '@scrum-harness/scrum-api'
 

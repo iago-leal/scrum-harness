@@ -13,6 +13,8 @@ export interface WireTask {
   description?: string
   estimate?: number
   status: 'backlog' | 'todo' | 'in_progress' | 'review' | 'done'
+  /** When the task last entered done (burndown stamp, v0.6+). */
+  doneAt?: string
   sprintId?: string
   order: number
 }
@@ -23,6 +25,7 @@ export interface WireComponent {
   featureId: string
   title: string
   description?: string
+  status: 'proposed' | 'in_progress' | 'done'
   tasks: WireTask[]
 }
 
@@ -32,7 +35,7 @@ export interface WireFeature {
   releaseId: string
   title: string
   description?: string
-  status: 'proposed' | 'committed' | 'done'
+  status: 'proposed' | 'committed' | 'in_progress' | 'done'
   components: WireComponent[]
 }
 
@@ -56,6 +59,8 @@ export interface WireSprint {
   startDate?: string
   endDate?: string
   status: 'planned' | 'active' | 'completed'
+  /** Per-column WIP limits of the task board (soft), when set. */
+  wipLimits?: Partial<Record<'todo' | 'in_progress' | 'review' | 'done', number>>
 }
 
 /** One recorded ceremony. */
@@ -68,12 +73,41 @@ export interface WireCeremony {
   notes: { category: string; text: string }[]
 }
 
+/** One shelved (trashed or archived) item, flattened for listing. */
+export interface WireShelfItem {
+  id: string
+  kind: 'release' | 'feature' | 'component' | 'task'
+  title: string
+  /** Parent id, absent for releases. */
+  parentId?: string
+  /** When it was shelved (ISO-8601). */
+  at: string
+  status?: string
+  estimate?: number
+}
+
+/**
+ * Per-sprint chart data. Unlike the live tree, it keeps counting archived
+ * done tasks of historical sprints (the server sources it from sprintStatus).
+ */
+export interface WireSprintStats {
+  sprintId: string
+  totals: { tasks: number; done: number; points: number; pointsDone: number }
+  tasks: { status: string; estimate?: number; doneAt?: string }[]
+}
+
 /** The whole board state served by GET /scrum-api/state. */
 export interface ScrumState {
   tree: { releases: WireRelease[] }
   sprints: WireSprint[]
   ceremonies: WireCeremony[]
   activeSprintId: string | null
+  /** Soft-deleted items, newest deletion first. */
+  trash: WireShelfItem[]
+  /** Archived (concluded) items, newest first. */
+  archive: WireShelfItem[]
+  /** Chart data per sprint (velocity, burndown). Absent on pre-v0.6 servers. */
+  stats?: WireSprintStats[]
 }
 
 /** Kanban columns, in board order. */
@@ -87,27 +121,37 @@ export const COLUMN_LABELS: Record<(typeof COLUMNS)[number], string> = {
   done: 'Concluído',
 }
 
+/** Component workflow, in board-column order (Azure-style level board). */
+export const COMPONENT_FLOW = ['proposed', 'in_progress', 'done'] as const
+
+/** Feature workflow, in board-column order (Azure-style level board). */
+export const FEATURE_FLOW = ['proposed', 'committed', 'in_progress', 'done'] as const
+
 /**
- * Read the whole state.
+ * Read the whole state of one workspace's board.
+ * @param workspace - workspace path; null selects the global fallback board.
  * @returns the current board state.
  */
-export async function fetchState(): Promise<ScrumState> {
-  const response = await fetch('/scrum-api/state')
+export async function fetchState(workspace: string | null): Promise<ScrumState> {
+  const query = workspace === null ? '' : `?workspace=${encodeURIComponent(workspace)}`
+  const response = await fetch(`/scrum-api/state${query}`)
   const body = await response.json() as { ok: boolean; state?: ScrumState; message?: string }
   if (!body.ok || body.state === undefined) throw new Error(body.message ?? `GET state failed (${response.status})`)
   return body.state
 }
 
 /**
- * Run one mutation; the response carries the fresh state.
+ * Run one mutation on one workspace's board; the response carries the fresh
+ * state of that board.
  * @param action - the action envelope ({ action, ...payload }).
+ * @param workspace - workspace path; null selects the global fallback board.
  * @returns the state after the mutation.
  */
-export async function act(action: Record<string, unknown>): Promise<ScrumState> {
+export async function act(action: Record<string, unknown>, workspace: string | null): Promise<ScrumState> {
   const response = await fetch('/scrum-api/action', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify(action),
+    body: JSON.stringify({ ...action, ...workspace === null ? {} : { workspace } }),
   })
   const body = await response.json() as { ok: boolean; state?: ScrumState; code?: string; message?: string }
   if (!body.ok || body.state === undefined) {

@@ -60,8 +60,8 @@ export function apply(ctx: ClientContext): void {
           .finally(() => { actions.setBusy(false) })
       }
       return {
-        refresh: () => { settle(fetchState()) },
-        run: (action) => { settle(act(action)) },
+        refresh: (workspace) => { settle(fetchState(workspace)) },
+        run: (action, workspace) => { settle(act(action, workspace)) },
       }
     },
   }, Panel))

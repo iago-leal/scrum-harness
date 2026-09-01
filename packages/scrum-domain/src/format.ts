@@ -5,7 +5,7 @@
  */
 
 import type { Ceremony, Sprint } from './spec.ts'
-import type { ScrumTree, SprintStatus } from './service.ts'
+import type { ScrumTree, ShelfLists, SprintStatus } from './service.ts'
 
 /** Release-name lookup used to render sprint→release links. */
 export type ReleaseNames = ReadonlyMap<string, string>
@@ -39,7 +39,7 @@ export function formatTree(tree: ScrumTree, sprints?: Sprint[]): string {
     for (const feature of release.features) {
       lines.push(`  ${feature.id} ${feature.title} [${feature.status}]`)
       for (const component of feature.components) {
-        lines.push(`    ${component.id} ${component.title}`)
+        lines.push(`    ${component.id} ${component.title} [${component.status}]`)
         for (const task of component.tasks) {
           const points = task.estimate === undefined ? '' : ` (${task.estimate}pt)`
           const sprint = task.sprintId === undefined ? '' : ` @${task.sprintId}`
@@ -85,6 +85,32 @@ export function formatSprintStatus(status: SprintStatus, releaseNames?: ReleaseN
     return `  ${column}: ${list}`
   })
   return [head, progress, ...board].join('\n')
+}
+
+/**
+ * Render one shelf (the trash or the archive) as id-first lines grouped by
+ * kind, newest stamp first (the service pre-sorts).
+ * @param shelf - the per-kind lists.
+ * @param kind - which shelf this is, for labels and the empty hint.
+ * @returns the multi-line listing (or a hint when empty).
+ */
+export function formatShelf(shelf: ShelfLists, kind: 'trash' | 'archive'): string {
+  const stampOf = (r: { deletedAt?: string; archivedAt?: string }): string =>
+    (kind === 'trash' ? r.deletedAt : r.archivedAt) ?? ''
+  const lines: string[] = []
+  for (const release of shelf.releases) lines.push(`${release.id} ${release.name} [release] ${stampOf(release)}`)
+  for (const feature of shelf.features) lines.push(`${feature.id} ${feature.title} [feature, of ${feature.releaseId}] ${stampOf(feature)}`)
+  for (const component of shelf.components) lines.push(`${component.id} ${component.title} [component, of ${component.featureId}] ${stampOf(component)}`)
+  for (const task of shelf.tasks) {
+    const points = task.estimate === undefined ? '' : ` (${task.estimate}pt)`
+    lines.push(`${task.id} ${task.title} [task ${task.status}, of ${task.componentId}]${points} ${stampOf(task)}`)
+  }
+  if (lines.length === 0) {
+    return kind === 'trash'
+      ? 'The trash is empty.'
+      : 'The archive is empty.'
+  }
+  return lines.join('\n')
 }
 
 /**

@@ -100,6 +100,36 @@ describe('scrum-api', () => {
     expect(badLink.status).toBe(404)
   })
 
+  it('round-trips the trash and the archive over the wire', async () => {
+    await act({ action: 'createRelease', name: 'v1.0' })
+    await act({ action: 'createFeature', releaseId: 'rel-1', title: 'F' })
+    await act({ action: 'createComponent', featureId: 'feat-1', title: 'C' })
+    await act({ action: 'createTask', componentId: 'comp-1', title: 'T', estimate: 2 })
+
+    const trashed = await act({ action: 'deleteItem', id: 'task-1' })
+    expect(trashed.status).toBe(200)
+    expect(trashed.json.state.trash).toMatchObject([{ id: 'task-1', kind: 'task', title: 'T', estimate: 2 }])
+    expect(trashed.json.state.tree.releases[0].features[0].components[0].tasks).toEqual([])
+
+    const restored = await act({ action: 'restoreItem', id: 'task-1' })
+    expect(restored.json.state.trash).toEqual([])
+    expect(restored.json.state.tree.releases[0].features[0].components[0].tasks).toHaveLength(1)
+
+    const archived = await act({ action: 'archiveItem', id: 'task-1' })
+    expect(archived.json.state.archive).toMatchObject([{ id: 'task-1', kind: 'task' }])
+    const unarchived = await act({ action: 'unarchiveItem', id: 'task-1' })
+    expect(unarchived.json.state.archive).toEqual([])
+
+    await act({ action: 'deleteItem', id: 'task-1' })
+    const purged = await act({ action: 'purgeItem', id: 'task-1' })
+    expect(purged.json.result).toEqual(['task-1'])
+    const empty = await act({ action: 'emptyTrash' })
+    expect(empty.json.result).toEqual([])
+    const notInTrash = await act({ action: 'purgeItem', id: 'rel-1' })
+    expect(notInTrash.status).toBe(409)
+    expect(notInTrash.json.code).toBe('not-in-trash')
+  })
+
   it('maps business errors onto 404/409 and keeps codes', async () => {
     const missing = await act({ action: 'startSprint', sprintId: 'spr-9' })
     expect(missing.status).toBe(404)
@@ -111,6 +141,21 @@ describe('scrum-api', () => {
     const conflict = await act({ action: 'startSprint', sprintId: 'spr-2' })
     expect(conflict.status).toBe(409)
     expect(conflict.json.code).toBe('sprint-already-active')
+  })
+
+  it('isolates boards per workspace on both routes (v0.5)', async () => {
+    const workspace = join(root, 'projeto-x')
+    const created = await act({ action: 'createRelease', name: 'Só do X', workspace })
+    expect(created.status).toBe(200)
+    expect(created.json.state.tree.releases).toHaveLength(1)
+
+    // Without workspace both routes answer the (empty) global board.
+    const globalState = await (await fetch(`${base}/scrum-api/state`)).json()
+    expect(globalState.state.tree.releases).toEqual([])
+
+    // With the workspace the state carries that board.
+    const wsState = await (await fetch(`${base}/scrum-api/state?workspace=${encodeURIComponent(workspace)}`)).json()
+    expect(wsState.state.tree.releases[0].name).toBe('Só do X')
   })
 
   it('refuses non-JSON posts and malformed envelopes', async () => {

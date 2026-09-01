@@ -20,6 +20,7 @@
     "@scrum-harness/domain": "^0.1.0",
     "@scrum-harness/tool-scrum": "^0.1.0",
     "@scrum-harness/command-scrum": "^0.1.0",
+    "@scrum-harness/context-scrum": "^0.1.0",
     "@scrum-harness/scrum-api": "^0.1.0",
     "@scrum-harness/ui": "^0.1.0"
   }

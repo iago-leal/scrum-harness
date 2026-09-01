@@ -8,6 +8,7 @@
 import { ScrumService } from './service.ts'
 
 export * from './spec.ts'
+export * from './boards.ts'
 export * from './service.ts'
 export * from './format.ts'
 

@@ -39,12 +39,17 @@ afterEach(async () => {
   rmSync(root, { recursive: true, force: true })
 })
 
-/** Run one tool through the registry; returns the text of the first block. */
-async function run(name: string, args: unknown): Promise<{ isError: boolean; text: string }> {
+/**
+ * Run one tool through the registry; returns the text of the first block.
+ * `cwd` simulates the calling session's workspace (agent → session header),
+ * exactly the field the tools route boards by; absent = global board.
+ */
+async function run(name: string, args: unknown, cwd?: string): Promise<{ isError: boolean; text: string }> {
   const result = await ctx.tools.execute({
     callId: `call-${++calls}` as CallId,
     name,
     arguments: args,
+    ...cwd === undefined ? {} : { agent: { session: { header: { cwd } } } as never },
     signal: new AbortController().signal,
   })
   const first = result.content[0]
@@ -59,6 +64,8 @@ describe('tool-scrum', () => {
       'scrum_task_create', 'scrum_item_update', 'scrum_item_delete', 'scrum_sprint_plan',
       'scrum_sprint_assign', 'scrum_sprint_start', 'scrum_sprint_end', 'scrum_sprint_status',
       'scrum_task_move', 'scrum_ceremony_record', 'scrum_ceremony_list',
+      'scrum_trash_list', 'scrum_item_restore', 'scrum_item_purge', 'scrum_trash_empty',
+      'scrum_archive_list', 'scrum_item_archive', 'scrum_item_unarchive', 'scrum_archive_completed',
     ]) {
       expect(names).toContain(expected)
     }
@@ -103,6 +110,44 @@ describe('tool-scrum', () => {
 
     const status = await run('scrum_sprint_status', { sprintId: 'spr-1' })
     expect(status.text).toContain('→ rel-1 v1.0')
+  })
+
+  it('drives the trash and the archive through tool calls', async () => {
+    await run('scrum_release_create', { name: 'v1.0' })
+    await run('scrum_feature_create', { releaseId: 'rel-1', title: 'F' })
+    await run('scrum_component_create', { featureId: 'feat-1', title: 'C' })
+    await run('scrum_task_create', { componentId: 'comp-1', title: 'T' })
+
+    expect((await run('scrum_trash_list', {})).text).toContain('empty')
+    expect((await run('scrum_item_delete', { id: 'task-1' })).text).toContain('Moved to trash: task-1')
+    expect((await run('scrum_trash_list', {})).text).toContain('task-1 T')
+    expect((await run('scrum_tree', {})).text).not.toContain('task-1')
+    expect((await run('scrum_item_restore', { id: 'task-1' })).text).toContain('Restored: task-1')
+
+    expect((await run('scrum_item_archive', { id: 'task-1' })).text).toContain('Archived: task-1')
+    expect((await run('scrum_archive_list', {})).text).toContain('task-1 T')
+    expect((await run('scrum_item_unarchive', { id: 'task-1' })).text).toContain('Unarchived: task-1')
+
+    await run('scrum_item_delete', { id: 'task-1' })
+    expect((await run('scrum_item_purge', { id: 'task-1' })).text).toContain('Purged forever: task-1')
+    const gone = await run('scrum_item_restore', { id: 'task-1' })
+    expect(gone.isError).toBe(true)
+    expect((await run('scrum_trash_empty', {})).text).toContain('already empty')
+    expect((await run('scrum_archive_completed', {})).text).toContain('Nothing to archive')
+  })
+
+  it('routes each call to the calling session workspace board (v0.5)', async () => {
+    const cwd = join(root, 'projeto-x')
+    expect((await run('scrum_release_create', { name: 'X v1' }, cwd)).text).toContain('rel-1')
+
+    // The global board (no cwd) stays empty; the workspace board sees it.
+    expect((await run('scrum_tree', {})).text).toContain('Empty backlog')
+    expect((await run('scrum_tree', {}, cwd)).text).toContain('X v1')
+
+    // A sibling workspace is a different board with its own id sequence.
+    const other = join(root, 'projeto-y')
+    expect((await run('scrum_release_create', { name: 'Y v1' }, other)).text).toContain('rel-1')
+    expect((await run('scrum_tree', {}, other)).text).not.toContain('X v1')
   })
 
   it('materializes business rejections as tool errors', async () => {

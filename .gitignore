@@ -7,6 +7,7 @@ lib/
 .DS_Store
 .dsh-home/sessions/
 .dsh-home/storages/
+.dsh-home/attachments/
 .dsh-home/profiles/node_modules/
 .dsh-home/.anonymous-user-id
 .dsh-home/settings.yaml
