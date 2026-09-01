@@ -226,7 +226,7 @@ export function Tree(props: { state: ScrumState; callbacks: TreeCallbacks; ui: T
 
   /** Sprint cell of one release: linked sprint chips + target date. */
   const releaseSprintCell = (release: WireRelease): ReactNode => {
-    const linked = props.state.sprints.filter(s => s.releaseId === release.id)
+    const linked = props.state.sprints.filter(s => s.releaseIds.includes(release.id))
     if (linked.length === 0 && release.targetDate === undefined) return undefined
     return (
       <>

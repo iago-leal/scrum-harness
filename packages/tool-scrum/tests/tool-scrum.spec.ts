@@ -112,6 +112,33 @@ describe('tool-scrum', () => {
     expect(status.text).toContain('→ rel-1 v1.0')
   })
 
+  it('links one sprint to multiple releases via releaseIds (v0.11)', async () => {
+    await run('scrum_release_create', { name: 'v1.0' })
+    await run('scrum_release_create', { name: 'v2.0' })
+
+    const planned = await run('scrum_sprint_plan', { goal: 'Dual', releaseIds: ['rel-1', 'rel-2'] })
+    expect(planned.text).toContain('for rel-1, rel-2')
+
+    const tree = await run('scrum_tree', {})
+    expect(tree.text).toContain('→ rel-1 v1.0, rel-2 v2.0')
+  })
+
+  it('replaces the linked-release set through scrum_item_update releaseIds', async () => {
+    await run('scrum_release_create', { name: 'v1.0' })
+    await run('scrum_release_create', { name: 'v2.0' })
+    await run('scrum_sprint_plan', { goal: 'Swap', releaseId: 'rel-1' })
+
+    expect((await run('scrum_item_update', { id: 'spr-1', releaseIds: ['rel-2'] })).text).toContain('Updated spr-1')
+    const tree = await run('scrum_tree', {})
+    expect(tree.text).toContain('→ rel-2 v2.0')
+    expect(tree.text).not.toContain('→ rel-1 v1.0')
+
+    // An unknown release id in the array is a business rejection.
+    const bad = await run('scrum_item_update', { id: 'spr-1', releaseIds: ['rel-2', 'rel-9'] })
+    expect(bad.isError).toBe(true)
+    expect(bad.text).toContain('rel-9')
+  })
+
   it('drives the trash and the archive through tool calls', async () => {
     await run('scrum_release_create', { name: 'v1.0' })
     await run('scrum_feature_create', { releaseId: 'rel-1', title: 'F' })

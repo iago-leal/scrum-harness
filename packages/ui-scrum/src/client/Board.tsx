@@ -345,9 +345,11 @@ export function Board(props: { state: ScrumState; callbacks: BoardCallbacks; ui:
     crumb: crumbs.get(task.componentId) ?? task.componentId,
     estimate: task.estimate,
   }))
-  const release = active.releaseId === undefined
-    ? undefined
-    : releases.find(r => r.id === active.releaseId)
+  /** Linked releases of the active sprint (id + name when still live). */
+  const linkedReleases = active.releaseIds.map((id) => {
+    const release = releases.find(r => r.id === id)
+    return { id, name: release?.name }
+  })
 
   /** Soft WIP limits of the active sprint, edited straight on the counters. */
   const wip: WipFace = {
@@ -382,11 +384,11 @@ export function Board(props: { state: ScrumState; callbacks: BoardCallbacks; ui:
       <div className="scrum-section-head">
         <h2>Board — {active.id} #{active.number}</h2>
         <span className="scrum-muted">{active.goal}</span>
-        {active.releaseId !== undefined && (
-          <span className="scrum-pts" title="Release vinculada">
-            🎯 {active.releaseId}{release !== undefined ? ` ${release.name}` : ''}
+        {linkedReleases.map(release => (
+          <span key={release.id} className="scrum-pts" title="Release vinculada">
+            🎯 {release.id}{release.name !== undefined ? ` ${release.name}` : ''}
           </span>
-        )}
+        ))}
         <span style={{ flex: 1 }} />
         <button
           className={`scrum-btn ghost${ui.swimlanes ? ' is-on' : ''}`}

@@ -54,8 +54,8 @@ export interface WireSprint {
   id: string
   number: number
   goal: string
-  /** Release this sprint advances, when linked. */
-  releaseId?: string
+  /** Releases this sprint advances (possibly empty, v0.11+). */
+  releaseIds: string[]
   startDate?: string
   endDate?: string
   status: 'planned' | 'active' | 'completed'

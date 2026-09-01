@@ -15,7 +15,7 @@ import * as StorageDomain from '@deepseek-ai/dsh-storage-domain'
 import { ScrumService, ScrumError } from '../src/service.ts'
 import type { ScrumBoard } from '../src/service.ts'
 import { boardNameOf, GLOBAL_BOARD_NAME } from '../src/boards.ts'
-import { componentSchema } from '../src/spec.ts'
+import { componentSchema, sprintSchema } from '../src/spec.ts'
 
 let root: string
 let ctx: Context
@@ -177,29 +177,71 @@ describe('sprints', () => {
       .rejects.toMatchObject({ code: 'not-found' })
 
     const sprint = await scrum.planSprint({ goal: 'Ship v1', releaseId: release.id })
-    expect(sprint.releaseId).toBe(release.id)
+    expect(sprint.releaseIds).toEqual([release.id])
     expect(scrum.sprintsOfRelease(release.id).map(s => s.id)).toEqual([sprint.id])
     expect(scrum.releaseNames().get(release.id)).toBe('v1.0')
 
     const relinked = await scrum.updateItem(sprint.id, { releaseId: other.id })
-    expect(relinked).toMatchObject({ releaseId: other.id })
+    expect(relinked).toMatchObject({ releaseIds: [other.id] })
     await expect(scrum.updateItem(sprint.id, { releaseId: 'rel-9' }))
       .rejects.toMatchObject({ code: 'not-found' })
 
     const unlinked = await scrum.updateItem(sprint.id, { releaseId: '' })
-    expect((unlinked as { releaseId?: string }).releaseId).toBeUndefined()
+    expect((unlinked as { releaseIds: string[] }).releaseIds).toEqual([])
+  })
+
+  it('links one sprint to MANY releases, replacing and validating the whole set', async () => {
+    const v1 = await scrum.createRelease({ name: 'v1.0' })
+    const v2 = await scrum.createRelease({ name: 'v2.0' })
+    const v3 = await scrum.createRelease({ name: 'v3.0' })
+
+    // Plan with the whole set (deduplicated) and read it back from both ends.
+    const sprint = await scrum.planSprint({ goal: 'dupla', releaseIds: [v1.id, v2.id, v1.id] })
+    expect(sprint.releaseIds).toEqual([v1.id, v2.id])
+    expect(scrum.sprintsOfRelease(v1.id).map(s => s.id)).toEqual([sprint.id])
+    expect(scrum.sprintsOfRelease(v2.id).map(s => s.id)).toEqual([sprint.id])
+
+    // releaseIds REPLACES the set and wins over the single-link shortcut.
+    const replaced = await scrum.updateItem(sprint.id, { releaseIds: [v3.id], releaseId: v1.id })
+    expect(replaced).toMatchObject({ releaseIds: [v3.id] })
+
+    // Every id of the set is validated against live releases.
+    await expect(scrum.planSprint({ goal: 'x', releaseIds: [v1.id, 'rel-9'] }))
+      .rejects.toMatchObject({ code: 'not-found' })
+    await expect(scrum.updateItem(sprint.id, { releaseIds: ['rel-9'] }))
+      .rejects.toMatchObject({ code: 'not-found' })
+
+    // Empty array unlinks everything.
+    const cleared = await scrum.updateItem(sprint.id, { releaseIds: [] })
+    expect((cleared as { releaseIds: string[] }).releaseIds).toEqual([])
+  })
+
+  it('folds legacy single-link media into releaseIds on parse (no version bump)', () => {
+    const legacy = {
+      id: 'spr-1', number: 1, goal: 'old media', releaseId: 'rel-7',
+      status: 'completed', createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z',
+    }
+    expect(sprintSchema.parse(legacy)).toMatchObject({ releaseIds: ['rel-7'] })
+    expect('releaseId' in sprintSchema.parse(legacy)).toBe(false)
+    // Media with neither field loads as unlinked; canonical form passes through.
+    const { releaseId: _dropped, ...unlinked } = legacy
+    expect(sprintSchema.parse(unlinked).releaseIds).toEqual([])
+    expect(sprintSchema.parse({ ...unlinked, releaseIds: ['rel-1', 'rel-2'] }).releaseIds)
+      .toEqual(['rel-1', 'rel-2'])
   })
 
   it('trashing a release keeps sprint links; only purge unlinks them', async () => {
     const release = await scrum.createRelease({ name: 'v1.0' })
-    const sprint = await scrum.planSprint({ goal: 'g', releaseId: release.id })
+    const keeper = await scrum.createRelease({ name: 'keeper' })
+    const sprint = await scrum.planSprint({ goal: 'g', releaseIds: [release.id, keeper.id] })
     await scrum.deleteItem(release.id, true)
     // Soft delete is reversible, so the link survives with it.
-    expect(scrum.sprints().find(s => s.id === sprint.id)!.releaseId).toBe(release.id)
+    expect(scrum.sprints().find(s => s.id === sprint.id)!.releaseIds).toContain(release.id)
     await scrum.purgeItem(release.id)
     const survivor = scrum.sprints().find(s => s.id === sprint.id)
     expect(survivor).toBeDefined()
-    expect(survivor!.releaseId).toBeUndefined()
+    // Only the purged id leaves the set; remaining links survive.
+    expect(survivor!.releaseIds).toEqual([keeper.id])
   })
 
   it('assigns and removes tasks from a planned sprint', async () => {

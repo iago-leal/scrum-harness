@@ -141,8 +141,14 @@ export const sprintSchema = z.object({
   /** Sequential sprint number, for humans ("Sprint 7"). */
   number: z.number().int().positive(),
   goal: z.string().min(1),
-  /** Optional link to the Release this sprint advances (visibility only). */
+  /**
+   * Legacy single release link (pre-v0.11 media). Folded into `releaseIds`
+   * by the transform below, so old boards load without a version bump — the
+   * domain parses every record on open and keeps the parsed value.
+   */
   releaseId: z.string().optional(),
+  /** Releases this sprint advances (visibility only; many since v0.11). */
+  releaseIds: z.array(z.string()).optional(),
   startDate: z.string().optional(),
   endDate: z.string().optional(),
   status: z.enum(SPRINT_STATUSES),
@@ -150,7 +156,11 @@ export const sprintSchema = z.object({
   wipLimits: wipLimitsSchema.optional(),
   createdAt: isoDate,
   updatedAt: isoDate,
-})
+}).transform(({ releaseId, releaseIds, ...rest }) => ({
+  ...rest,
+  // Canonical form: always the array; a legacy single link becomes [link].
+  releaseIds: releaseIds ?? (releaseId === undefined ? [] : [releaseId]),
+}))
 export type Sprint = z.infer<typeof sprintSchema>
 
 /** One recorded ceremony. Append-only: records are never edited or deleted. */

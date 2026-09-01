@@ -87,8 +87,10 @@ export interface UpdateItemInput {
   targetDate?: string
   status?: string
   goal?: string
-  /** Sprints only: link to a release; the empty string removes the link. */
+  /** Sprints only: link to ONE release (shortcut for `releaseIds: [id]`); the empty string removes every link. */
   releaseId?: string
+  /** Sprints only: REPLACE the whole set of linked releases (empty array unlinks; wins over `releaseId`). */
+  releaseIds?: string[]
   /**
    * Sprints only: REPLACE the per-column WIP limits of the board. Keys are
    * board columns; a value of 0 drops that column's limit; an empty object
@@ -104,8 +106,10 @@ export interface PlanSprintInput {
   endDate?: string
   /** Tasks selected into the sprint backlog (each must exist and be in `backlog`). */
   taskIds?: string[]
-  /** Optional Release this sprint advances (must exist). */
+  /** Optional single Release this sprint advances (shortcut for `releaseIds: [id]`). */
   releaseId?: string
+  /** Optional Releases this sprint advances (each must exist; wins over `releaseId`). */
+  releaseIds?: string[]
 }
 
 /** Input to {@link ScrumService.recordCeremony}. */
@@ -342,7 +346,25 @@ export class ScrumBoard {
    * @returns the linked sprints.
    */
   sprintsOfRelease(releaseId: string): Sprint[] {
-    return this.sprints().filter(s => s.releaseId === releaseId)
+    return this.sprints().filter(s => s.releaseIds.includes(releaseId))
+  }
+
+  /**
+   * Normalize the two release-link fields of a sprint patch/plan into one
+   * replacement array, validating every id against the live releases.
+   * @param link - the single-link shortcut and/or the whole-set field.
+   * @returns the deduplicated replacement set; undefined leaves links untouched.
+   */
+  private narrowReleaseLinks(link: { releaseId?: string; releaseIds?: string[] }): string[] | undefined {
+    if (link.releaseIds !== undefined) {
+      const ids = [...new Set(link.releaseIds)]
+      for (const id of ids) this.mustGetLive('releases', id)
+      return ids
+    }
+    if (link.releaseId === undefined) return undefined
+    if (link.releaseId === '') return []
+    this.mustGetLive('releases', link.releaseId)
+    return [link.releaseId]
   }
 
   /** @returns release-name lookup (id → name) for link rendering. */
@@ -450,16 +472,15 @@ export class ScrumBoard {
     }
     if (id.startsWith('spr-')) {
       this.mustGet('sprints', id)
-      if (patch.releaseId !== undefined && patch.releaseId !== '') this.mustGetLive('releases', patch.releaseId)
+      const releaseIds = this.narrowReleaseLinks(patch)
       const wipLimits = patch.wipLimits === undefined ? undefined : this.narrowWipLimits(patch.wipLimits, id)
       return this.domain.table('sprints').update(id, (current) => {
         const next: Sprint = {
           ...current,
           ...patch.goal === undefined ? {} : { goal: this.requireTitle(patch.goal) },
-          ...patch.releaseId === undefined || patch.releaseId === '' ? {} : { releaseId: patch.releaseId },
+          ...releaseIds === undefined ? {} : { releaseIds },
           ...stamp,
         }
-        if (patch.releaseId === '') delete next.releaseId
         if (wipLimits !== undefined) {
           if (Object.keys(wipLimits).length === 0) delete next.wipLimits
           else next.wipLimits = wipLimits
@@ -791,12 +812,12 @@ export class ScrumBoard {
   private async unlinkSprints(releaseIds: string[]): Promise<void> {
     if (releaseIds.length === 0) return
     for (const [sprintId, sprint] of [...this.domain.table('sprints').entries()]) {
-      if (sprint.releaseId === undefined || !releaseIds.includes(sprint.releaseId)) continue
-      await this.domain.table('sprints').update(sprintId, (current) => {
-        const next: Sprint = { ...current, updatedAt: this.now() }
-        delete next.releaseId
-        return next
-      })
+      if (!sprint.releaseIds.some(id => releaseIds.includes(id))) continue
+      await this.domain.table('sprints').update(sprintId, current => ({
+        ...current,
+        releaseIds: current.releaseIds.filter(id => !releaseIds.includes(id)),
+        updatedAt: this.now(),
+      }))
     }
   }
 
@@ -808,7 +829,7 @@ export class ScrumBoard {
    * @returns the stored sprint.
    */
   async planSprint(input: PlanSprintInput): Promise<Sprint> {
-    if (input.releaseId !== undefined) this.mustGetLive('releases', input.releaseId)
+    const releaseIds = this.narrowReleaseLinks(input) ?? []
     for (const taskId of input.taskIds ?? []) {
       const task = this.mustGetLive('tasks', taskId)
       if (task.sprintId !== undefined) {
@@ -822,7 +843,7 @@ export class ScrumBoard {
       id,
       number: counters.sprint,
       goal: this.requireTitle(input.goal),
-      ...input.releaseId === undefined ? {} : { releaseId: input.releaseId },
+      releaseIds,
       ...input.startDate === undefined ? {} : { startDate: input.startDate },
       ...input.endDate === undefined ? {} : { endDate: input.endDate },
       status: 'planned',

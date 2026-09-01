@@ -55,7 +55,7 @@ export function apply(ctx: Context): void {
   ctx.tools.register(defineTool({
     name: 'scrum_tree',
     description:
-      'Read the whole SCRUM hierarchy — Release > Feature > Component > Task — plus the sprint roster (each release line lists its linked sprints, each sprint its release). '
+      'Read the whole SCRUM hierarchy — Release > Feature > Component > Task — plus the sprint roster (each release line lists its linked sprints, each sprint its releases). '
       + 'Every line starts with the item id (rel-, feat-, comp-, task-, spr-) used by the other scrum_* tools. '
       + 'Call this first to orient yourself before creating or changing items.',
     parameters: {},
@@ -144,8 +144,8 @@ export function apply(ctx: Context): void {
     description:
       'Update fields of any SCRUM item by id. The id prefix selects the level: '
       + 'rel- (title→name, targetDate, status: planned|active|released), feat- (title, status: proposed|committed|in_progress|done), '
-      + 'comp- (title, status: proposed|in_progress|done), task- (title, estimate), spr- (goal, releaseId — empty string unlinks, '
-      + 'wipLimits). Description applies to all except sprints.',
+      + 'comp- (title, status: proposed|in_progress|done), task- (title, estimate), spr- (goal, releaseIds — replaces the linked '
+      + 'set, releaseId as one-id shortcut, wipLimits). Description applies to all except sprints.',
     parameters: {
       id: { type: 'string', required: true },
       title: { type: 'string', description: 'New title / release name.' },
@@ -154,7 +154,12 @@ export function apply(ctx: Context): void {
       targetDate: { type: 'string', description: 'Releases only (ISO date).' },
       status: { type: 'string', description: 'Releases, features and components (each level has its own workflow).' },
       goal: { type: 'string', description: 'Sprints only.' },
-      releaseId: { type: 'string', description: 'Sprints only: link to a release (rel-N); empty string removes the link.' },
+      releaseId: { type: 'string', description: 'Sprints only: shortcut for releaseIds with ONE release (rel-N); empty string removes every link.' },
+      releaseIds: {
+        type: 'array',
+        description: 'Sprints only: REPLACE the whole set of linked releases (rel-N ids); empty array unlinks. Wins over the releaseId shortcut.',
+        items: { type: 'string' },
+      },
       wipLimits: {
         type: 'object',
         description: 'Sprints only: REPLACE the per-column WIP limits of the board, e.g. {"in_progress": 3}. A value of 0 drops that column\'s limit; {} removes them all.',
@@ -328,7 +333,12 @@ export function apply(ctx: Context): void {
       + 'optional initial selection of backlog tasks (they become its sprint backlog, column todo).',
     parameters: {
       goal: { type: 'string', required: true, description: 'The sprint goal.' },
-      releaseId: { type: 'string', description: 'Release this sprint advances (rel-N); shown in every view.' },
+      releaseId: { type: 'string', description: 'Single release this sprint advances (rel-N); backward-compatible shortcut for releaseIds: [id].' },
+      releaseIds: {
+        type: 'array',
+        description: 'Releases this sprint advances (rel-N ids); replaces/extends the single releaseId shortcut and wins over it when both are sent.',
+        items: { type: 'string' },
+      },
       startDate: { type: 'string', description: 'ISO date.' },
       endDate: { type: 'string', description: 'ISO date.' },
       taskIds: {
@@ -343,7 +353,7 @@ export function apply(ctx: Context): void {
       const sprint = await board.planSprint(args)
       const selected = args.taskIds === undefined || args.taskIds.length === 0
         ? '' : ` with ${args.taskIds.length} task(s)`
-      const linked = sprint.releaseId === undefined ? '' : ` for ${sprint.releaseId}`
+      const linked = sprint.releaseIds.length === 0 ? '' : ` for ${sprint.releaseIds.join(', ')}`
       return { text: `Planned sprint ${sprint.id} #${sprint.number} "${sprint.goal}"${linked}${selected}. Start it with scrum_sprint_start.` }
     },
     presentCall: args => ({ card: 'generic', title: `Plan sprint "${args.goal}"`, kind: 'edit' }),

@@ -10,11 +10,14 @@ import type { ScrumTree, ShelfLists, SprintStatus } from './service.ts'
 /** Release-name lookup used to render sprint→release links. */
 export type ReleaseNames = ReadonlyMap<string, string>
 
-/** Render one sprint's release link (empty when unlinked). */
+/** Render one sprint's release links (empty when unlinked; many since v0.11). */
 function releaseSuffix(sprint: Sprint, names?: ReleaseNames): string {
-  if (sprint.releaseId === undefined) return ''
-  const name = names?.get(sprint.releaseId)
-  return ` → ${sprint.releaseId}${name === undefined ? '' : ` ${name}`}`
+  if (sprint.releaseIds.length === 0) return ''
+  const links = sprint.releaseIds.map((id) => {
+    const name = names?.get(id)
+    return `${id}${name === undefined ? '' : ` ${name}`}`
+  })
+  return ` → ${links.join(', ')}`
 }
 
 /**
@@ -31,7 +34,7 @@ export function formatTree(tree: ScrumTree, sprints?: Sprint[]): string {
   const lines: string[] = []
   for (const release of tree.releases) {
     const target = release.targetDate === undefined ? '' : ` (target: ${release.targetDate})`
-    const linked = (sprints ?? []).filter(s => s.releaseId === release.id)
+    const linked = (sprints ?? []).filter(s => s.releaseIds.includes(release.id))
     const sprintSuffix = linked.length === 0
       ? ''
       : ` (sprints: ${linked.map(s => `${s.id} ${s.status}`).join(', ')})`

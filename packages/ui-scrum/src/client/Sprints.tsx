@@ -77,30 +77,50 @@ function CeremonyForm(props: { sprintId: string; onRun: (action: Record<string, 
   )
 }
 
-/** Release link chip + relink selector shown on every non-completed sprint. */
+/** Linked-release chips (each removable) + link selector on every sprint. */
 function ReleaseLink(props: {
   sprint: WireSprint
   releases: ReleaseOption[]
   onRun: (action: Record<string, unknown>) => void
 }) {
   const { sprint } = props
-  const linked = props.releases.find(r => r.id === sprint.releaseId)
-  if (sprint.status === 'completed') {
-    return sprint.releaseId === undefined
-      ? null
-      : <span className="scrum-pts" title="Release vinculada">🎯 {sprint.releaseId}{linked !== undefined ? ` ${linked.name}` : ''}</span>
-  }
+  const editable = sprint.status !== 'completed'
+  const unlinked = props.releases.filter(r => !sprint.releaseIds.includes(r.id))
   return (
-    <select
-      title="Release vinculada"
-      value={sprint.releaseId ?? ''}
-      onChange={(e) => { props.onRun({ action: 'updateItem', id: sprint.id, releaseId: e.target.value }) }}
-    >
-      <option value="">— sem release —</option>
-      {props.releases.map(release => (
-        <option key={release.id} value={release.id}>🎯 {release.id} {release.name}</option>
-      ))}
-    </select>
+    <>
+      {sprint.releaseIds.map((id) => {
+        const linked = props.releases.find(r => r.id === id)
+        return (
+          <span key={id} className="scrum-rel-chip" title="Release vinculada">
+            🎯 {id}{linked !== undefined ? ` ${linked.name}` : ''}
+            {editable && (
+              <button
+                className="scrum-rel-chip-x"
+                title="Desvincular release"
+                onClick={() => {
+                  props.onRun({ action: 'updateItem', id: sprint.id, releaseIds: sprint.releaseIds.filter(r => r !== id) })
+                }}
+              >×</button>
+            )}
+          </span>
+        )
+      })}
+      {editable && unlinked.length > 0 && (
+        <select
+          title="Vincular release"
+          value=""
+          onChange={(e) => {
+            if (e.target.value.length === 0) return
+            props.onRun({ action: 'updateItem', id: sprint.id, releaseIds: [...sprint.releaseIds, e.target.value] })
+          }}
+        >
+          <option value="">＋ vincular release…</option>
+          {unlinked.map(release => (
+            <option key={release.id} value={release.id}>🎯 {release.id} {release.name}</option>
+          ))}
+        </select>
+      )}
+    </>
   )
 }
 

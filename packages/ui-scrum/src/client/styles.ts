@@ -432,4 +432,21 @@ button.scrum-chev:hover { background: var(--bgColor-neutral-muted, rgba(70, 90, 
   background: var(--bgColor-neutral-muted, #e2e6ee); color: var(--fgColor-muted, #3c4356);
   border-color: var(--borderColor-neutral-muted, transparent);
 }
+
+/* Linked-release chips on sprint cards, issue-label style: accent pill with
+   a discreet inline × to unlink that one release. */
+.scrum-rel-chip {
+  display: inline-flex; align-items: center; gap: 4px;
+  font-size: 10.5px; font-weight: 600;
+  border-radius: var(--borderRadius-full, 999px); padding: 1px 8px;
+  border: 1px solid var(--borderColor-accent-muted, transparent);
+  background: var(--bgColor-accent-muted, #d8ecff); color: var(--fgColor-accent, #135a9e);
+  white-space: nowrap;
+}
+.scrum-rel-chip-x {
+  border: 0; background: none; cursor: pointer; padding: 0 1px;
+  font-size: 12px; line-height: 1; color: var(--fgColor-accent, #135a9e);
+  opacity: 0.55; border-radius: var(--borderRadius-full, 999px);
+}
+.scrum-rel-chip-x:hover { opacity: 1; background: var(--bgColor-accent-emphasis, #2f6fed); color: var(--fgColor-onEmphasis, #fff); }
 `

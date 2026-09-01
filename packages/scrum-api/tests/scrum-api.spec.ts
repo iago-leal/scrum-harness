@@ -90,13 +90,36 @@ describe('scrum-api', () => {
     await act({ action: 'createRelease', name: 'v1.0' })
     const planned = await act({ action: 'planSprint', goal: 'Ship', releaseId: 'rel-1' })
     expect(planned.status).toBe(200)
-    expect(planned.json.result.releaseId).toBe('rel-1')
-    expect(planned.json.state.sprints[0].releaseId).toBe('rel-1')
+    expect(planned.json.result.releaseIds).toEqual(['rel-1'])
+    expect(planned.json.state.sprints[0].releaseIds).toEqual(['rel-1'])
 
     const unlinked = await act({ action: 'updateItem', id: 'spr-1', releaseId: '' })
-    expect(unlinked.json.state.sprints[0].releaseId).toBeUndefined()
+    expect(unlinked.json.state.sprints[0].releaseIds).toEqual([])
 
     const badLink = await act({ action: 'planSprint', goal: 'x', releaseId: 'rel-9' })
+    expect(badLink.status).toBe(404)
+  })
+
+  it('links one sprint to multiple releases through the wire (v0.11)', async () => {
+    await act({ action: 'createRelease', name: 'v1.0' })
+    await act({ action: 'createRelease', name: 'v2.0' })
+
+    const planned = await act({ action: 'planSprint', goal: 'Dual', releaseIds: ['rel-1', 'rel-2'] })
+    expect(planned.status).toBe(200)
+    expect(planned.json.result.releaseIds).toEqual(['rel-1', 'rel-2'])
+    expect(planned.json.state.sprints[0].releaseIds).toEqual(['rel-1', 'rel-2'])
+
+    // updateItem with releaseIds REPLACES the whole linked set…
+    const swapped = await act({ action: 'updateItem', id: 'spr-1', releaseIds: ['rel-2'] })
+    expect(swapped.status).toBe(200)
+    expect(swapped.json.state.sprints[0].releaseIds).toEqual(['rel-2'])
+
+    // …and an empty array unlinks everything.
+    const unlinked = await act({ action: 'updateItem', id: 'spr-1', releaseIds: [] })
+    expect(unlinked.status).toBe(200)
+    expect(unlinked.json.state.sprints[0].releaseIds).toEqual([])
+
+    const badLink = await act({ action: 'planSprint', goal: 'x', releaseIds: ['rel-1', 'rel-9'] })
     expect(badLink.status).toBe(404)
   })
 
