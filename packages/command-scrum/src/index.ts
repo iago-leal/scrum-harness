@@ -42,14 +42,15 @@ export function apply(ctx: Context): void {
         switch (verb ?? '') {
           case '':
           case 'tree': {
-            const tree = formatTree(ctx.scrum.tree())
+            const sprints = ctx.scrum.sprints()
+            const tree = formatTree(ctx.scrum.tree(), sprints)
             if ((verb ?? '') === 'tree') return { kind: 'success', text: tree }
-            return { kind: 'success', text: `${tree}\n\nSprints:\n${formatSprints(ctx.scrum.sprints())}` }
+            return { kind: 'success', text: `${tree}\n\nSprints:\n${formatSprints(sprints, ctx.scrum.releaseNames())}` }
           }
           case 'sprints':
-            return { kind: 'success', text: formatSprints(ctx.scrum.sprints()) }
+            return { kind: 'success', text: formatSprints(ctx.scrum.sprints(), ctx.scrum.releaseNames()) }
           case 'status':
-            return { kind: 'success', text: formatSprintStatus(ctx.scrum.sprintStatus(argument)) }
+            return { kind: 'success', text: formatSprintStatus(ctx.scrum.sprintStatus(argument), ctx.scrum.releaseNames()) }
           case 'ceremonies':
             return { kind: 'success', text: formatCeremonies(ctx.scrum.ceremonies(argument)) }
           default:

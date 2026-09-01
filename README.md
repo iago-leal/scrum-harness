@@ -11,7 +11,7 @@ Release
             └─ Tarefas
 ```
 
-**Sprints** são janelas de tempo que selecionam Tarefas dessa hierarquia (Sprint Backlog), com quadro Kanban (`todo / in_progress / review / done`) e **cerimônias** registradas (Planning, Daily Standup, Review, Retrospectiva).
+**Sprints** são janelas de tempo que selecionam Tarefas dessa hierarquia (Sprint Backlog), com quadro Kanban (`todo / in_progress / review / done`) e **cerimônias** registradas (Planning, Daily Standup, Review, Retrospectiva). Cada sprint pode ser **vinculada a uma Release** (no planejamento ou depois); o vínculo aparece em todas as vistas — chips de sprint na linha da release (árvore), seletor/badge na aba Sprints, cabeçalho do Board e saídas do `/scrum` e das tools.
 
 ## Pacotes
 
@@ -43,6 +43,8 @@ bash scripts/serve.sh 3090     # sobe a GUI web com o perfil scrum
 Abra `http://127.0.0.1:3090` — o botão **▦ SCRUM** fica no rodapé da sidebar. Os dados vivem em `.dsh-home/storages/scrum.json` (compartilhados entre a GUI, as tools do modelo e o `/scrum`).
 
 O perfil `scrum` só existe neste repositório (`DSH_HOME` próprio em `.dsh-home/`): o harness aberto de qualquer outra pasta/perfil não vê nada disso.
+
+**Login compartilhado**: o `setup-profile.sh` gera `.dsh-home/profiles/scrum/cordis.patch.yml` apontando as rows `settings` e `credentials` para os arquivos do seu `~/.dsh` (ambos os plugins aceitam `path` e observam o arquivo). Assim o sign-in na Anthropic, as chaves de API e o modelo padrão do harness normal valem também aqui — enquanto sessões, workspaces e os dados SCRUM continuam isolados no `.dsh-home`. Outra home real: `REAL_DSH_HOME=/caminho bash scripts/setup-profile.sh`.
 
 ## Arquitetura
 

@@ -76,6 +76,8 @@ export interface UpdateItemInput {
   targetDate?: string
   status?: string
   goal?: string
+  /** Sprints only: link to a release; the empty string removes the link. */
+  releaseId?: string
 }
 
 /** Input to {@link ScrumService.planSprint}. */
@@ -85,6 +87,8 @@ export interface PlanSprintInput {
   endDate?: string
   /** Tasks selected into the sprint backlog (each must exist and be in `backlog`). */
   taskIds?: string[]
+  /** Optional Release this sprint advances (must exist). */
+  releaseId?: string
 }
 
 /** Input to {@link ScrumService.recordCeremony}. */
@@ -300,6 +304,20 @@ export class ScrumService extends Service {
   }
 
   /**
+   * Sprints linked to one release, newest number first.
+   * @param releaseId - the release id.
+   * @returns the linked sprints.
+   */
+  sprintsOfRelease(releaseId: string): Sprint[] {
+    return this.sprints().filter(s => s.releaseId === releaseId)
+  }
+
+  /** @returns release-name lookup (id → name) for link rendering. */
+  releaseNames(): Map<string, string> {
+    return new Map([...this.domain.table('releases').entries()].map(([id, release]) => [id, release.name]))
+  }
+
+  /**
    * List ceremonies, optionally for one sprint, oldest first.
    * @param sprintId - restrict to one sprint when present.
    * @returns the matching ceremony records.
@@ -396,11 +414,17 @@ export class ScrumService extends Service {
     }
     if (id.startsWith('spr-')) {
       this.mustGet('sprints', id)
-      return this.domain.table('sprints').update(id, current => ({
-        ...current,
-        ...patch.goal === undefined ? {} : { goal: this.requireTitle(patch.goal) },
-        ...stamp,
-      }))
+      if (patch.releaseId !== undefined && patch.releaseId !== '') this.mustGet('releases', patch.releaseId)
+      return this.domain.table('sprints').update(id, (current) => {
+        const next: Sprint = {
+          ...current,
+          ...patch.goal === undefined ? {} : { goal: this.requireTitle(patch.goal) },
+          ...patch.releaseId === undefined || patch.releaseId === '' ? {} : { releaseId: patch.releaseId },
+          ...stamp,
+        }
+        if (patch.releaseId === '') delete next.releaseId
+        return next
+      })
     }
     throw new ScrumError('invalid-id', `id '${id}' carries no known prefix (rel-, feat-, comp-, task-, spr-)`)
   }
@@ -431,6 +455,17 @@ export class ScrumService extends Service {
       else if (victim.startsWith('feat-')) await this.domain.table('features').delete(victim)
       else if (victim.startsWith('comp-')) await this.domain.table('components').delete(victim)
       else await this.domain.table('tasks').delete(victim)
+    }
+    if (id.startsWith('rel-')) {
+      // Sprints are history and survive their release: they only lose the link.
+      for (const [sprintId, sprint] of this.domain.table('sprints').entries()) {
+        if (sprint.releaseId !== id) continue
+        await this.domain.table('sprints').update(sprintId, (current) => {
+          const next: Sprint = { ...current, updatedAt: this.now() }
+          delete next.releaseId
+          return next
+        })
+      }
     }
     return plan
   }
@@ -468,6 +503,7 @@ export class ScrumService extends Service {
    * @returns the stored sprint.
    */
   async planSprint(input: PlanSprintInput): Promise<Sprint> {
+    if (input.releaseId !== undefined) this.mustGet('releases', input.releaseId)
     for (const taskId of input.taskIds ?? []) {
       const task = this.mustGet('tasks', taskId)
       if (task.sprintId !== undefined) {
@@ -481,6 +517,7 @@ export class ScrumService extends Service {
       id,
       number: counters.sprint,
       goal: this.requireTitle(input.goal),
+      ...input.releaseId === undefined ? {} : { releaseId: input.releaseId },
       ...input.startDate === undefined ? {} : { startDate: input.startDate },
       ...input.endDate === undefined ? {} : { endDate: input.endDate },
       status: 'planned',

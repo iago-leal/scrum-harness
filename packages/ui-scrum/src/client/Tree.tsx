@@ -12,6 +12,8 @@ import type { ScrumState, WireComponent, WireFeature, WireRelease, WireSprint, W
 export interface TreeCallbacks {
   /** Run one wire action (panel wraps busy/error and refreshes the store). */
   run: (action: Record<string, unknown>) => void
+  /** Navigate to the Sprints section (release→sprint chips). */
+  goToSprints: () => void
 }
 
 /** Status badge. */
@@ -218,6 +220,16 @@ export function Tree(props: { state: ScrumState; callbacks: TreeCallbacks }) {
         <>
           <Badge value={release.status} />
           {release.targetDate !== undefined && <span className="scrum-pts">🎯 {release.targetDate}</span>}
+          {props.state.sprints
+            .filter(sprint => sprint.releaseId === release.id)
+            .map(sprint => (
+              <button
+                key={sprint.id}
+                className={`scrum-chip st-${sprint.status}`}
+                title={`Sprint #${sprint.number} "${sprint.goal}" (${sprint.status}) — abrir aba Sprints`}
+                onClick={props.callbacks.goToSprints}
+              >{sprint.id} · {sprint.status}</button>
+            ))}
         </>
       )}
       actions={(

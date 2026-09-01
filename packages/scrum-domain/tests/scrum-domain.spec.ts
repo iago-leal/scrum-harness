@@ -130,6 +130,36 @@ describe('sprints', () => {
       .rejects.toMatchObject({ code: 'invalid-column' })
   })
 
+  it('links sprints to releases at planning, relinks and unlinks later', async () => {
+    const release = await scrum.createRelease({ name: 'v1.0' })
+    const other = await scrum.createRelease({ name: 'v2.0' })
+
+    await expect(scrum.planSprint({ goal: 'g', releaseId: 'rel-9' }))
+      .rejects.toMatchObject({ code: 'not-found' })
+
+    const sprint = await scrum.planSprint({ goal: 'Ship v1', releaseId: release.id })
+    expect(sprint.releaseId).toBe(release.id)
+    expect(scrum.sprintsOfRelease(release.id).map(s => s.id)).toEqual([sprint.id])
+    expect(scrum.releaseNames().get(release.id)).toBe('v1.0')
+
+    const relinked = await scrum.updateItem(sprint.id, { releaseId: other.id })
+    expect(relinked).toMatchObject({ releaseId: other.id })
+    await expect(scrum.updateItem(sprint.id, { releaseId: 'rel-9' }))
+      .rejects.toMatchObject({ code: 'not-found' })
+
+    const unlinked = await scrum.updateItem(sprint.id, { releaseId: '' })
+    expect((unlinked as { releaseId?: string }).releaseId).toBeUndefined()
+  })
+
+  it('deleting a release unlinks its sprints instead of deleting them', async () => {
+    const release = await scrum.createRelease({ name: 'v1.0' })
+    const sprint = await scrum.planSprint({ goal: 'g', releaseId: release.id })
+    await scrum.deleteItem(release.id, true)
+    const survivor = scrum.sprints().find(s => s.id === sprint.id)
+    expect(survivor).toBeDefined()
+    expect(survivor!.releaseId).toBeUndefined()
+  })
+
   it('assigns and removes tasks from a planned sprint', async () => {
     const componentId = await seedComponent()
     const task = await scrum.createTask({ componentId, title: 'a' })

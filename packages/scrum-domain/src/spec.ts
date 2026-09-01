@@ -89,6 +89,8 @@ export const sprintSchema = z.object({
   /** Sequential sprint number, for humans ("Sprint 7"). */
   number: z.number().int().positive(),
   goal: z.string().min(1),
+  /** Optional link to the Release this sprint advances (visibility only). */
+  releaseId: z.string().optional(),
   startDate: z.string().optional(),
   endDate: z.string().optional(),
   status: z.enum(SPRINT_STATUSES),

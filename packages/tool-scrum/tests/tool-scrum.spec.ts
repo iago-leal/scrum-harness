@@ -92,6 +92,19 @@ describe('tool-scrum', () => {
     expect(tree.text).toContain('task-1 Tokens [done @spr-1] (3pt)')
   })
 
+  it('renders release links in plan, tree and status outputs', async () => {
+    await run('scrum_release_create', { name: 'v1.0' })
+    const planned = await run('scrum_sprint_plan', { goal: 'Ship v1', releaseId: 'rel-1' })
+    expect(planned.text).toContain('for rel-1')
+
+    const tree = await run('scrum_tree', {})
+    expect(tree.text).toContain('(sprints: spr-1 planned)')
+    expect(tree.text).toContain('→ rel-1 v1.0')
+
+    const status = await run('scrum_sprint_status', { sprintId: 'spr-1' })
+    expect(status.text).toContain('→ rel-1 v1.0')
+  })
+
   it('materializes business rejections as tool errors', async () => {
     const bad = await run('scrum_feature_create', { releaseId: 'rel-9', title: 'x' })
     expect(bad.isError).toBe(true)

@@ -151,4 +151,13 @@ export const SCRUM_CSS = `
   color: #4b5265; margin-right: 6px; text-transform: none;
 }
 .scrum-muted { color: #6b7280; font-size: 12px; }
+
+.scrum-chip {
+  border: none; cursor: pointer; font-size: 10.5px;
+  border-radius: 999px; padding: 1px 8px;
+  background: #e2e6ee; color: #3c4356; font-family: ui-monospace, monospace;
+}
+.scrum-chip:hover { filter: brightness(0.93); }
+.scrum-chip.st-active { background: #d8ecff; color: #135a9e; }
+.scrum-chip.st-completed { background: #d9f2df; color: #1d6b37; }
 `

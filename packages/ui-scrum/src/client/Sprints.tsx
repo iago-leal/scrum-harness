@@ -5,7 +5,10 @@
  */
 
 import { useState } from 'react'
-import type { ScrumState, WireCeremony, WireSprint, WireTask } from './api.ts'
+import type { ScrumState, WireCeremony, WireRelease, WireSprint, WireTask } from './api.ts'
+
+/** Minimal release option for the link selectors. */
+type ReleaseOption = Pick<WireRelease, 'id' | 'name'>
 
 /** Callbacks the sprint section drives. */
 export interface SprintsCallbacks {
@@ -72,11 +75,39 @@ function CeremonyForm(props: { sprintId: string; onRun: (action: Record<string, 
   )
 }
 
+/** Release link chip + relink selector shown on every non-completed sprint. */
+function ReleaseLink(props: {
+  sprint: WireSprint
+  releases: ReleaseOption[]
+  onRun: (action: Record<string, unknown>) => void
+}) {
+  const { sprint } = props
+  const linked = props.releases.find(r => r.id === sprint.releaseId)
+  if (sprint.status === 'completed') {
+    return sprint.releaseId === undefined
+      ? null
+      : <span className="scrum-pts" title="Release vinculada">🎯 {sprint.releaseId}{linked !== undefined ? ` ${linked.name}` : ''}</span>
+  }
+  return (
+    <select
+      title="Release vinculada"
+      value={sprint.releaseId ?? ''}
+      onChange={(e) => { props.onRun({ action: 'updateItem', id: sprint.id, releaseId: e.target.value }) }}
+    >
+      <option value="">— sem release —</option>
+      {props.releases.map(release => (
+        <option key={release.id} value={release.id}>🎯 {release.id} {release.name}</option>
+      ))}
+    </select>
+  )
+}
+
 /** One sprint card with progress, actions and its ceremonies. */
 function SprintCard(props: {
   sprint: WireSprint
   tasks: WireTask[]
   ceremonies: WireCeremony[]
+  releases: ReleaseOption[]
   hasActive: boolean
   onRun: (action: Record<string, unknown>) => void
 }) {
@@ -95,6 +126,7 @@ function SprintCard(props: {
         <span className="scrum-id">{sprint.id}</span>
         <span className="scrum-goal">#{sprint.number} {sprint.goal}</span>
         <span className={`scrum-badge st-${sprint.status}`}>{sprint.status}</span>
+        <ReleaseLink sprint={sprint} releases={props.releases} onRun={props.onRun} />
         {window.length > 0 && <span className="scrum-muted">{window}</span>}
         <span style={{ flex: 1 }} />
         {sprint.status === 'planned' && !props.hasActive && (
@@ -166,10 +198,12 @@ export function Sprints(props: { state: ScrumState; callbacks: SprintsCallbacks 
       {planning && (
         <div className="scrum-form" style={{ marginLeft: 0 }}>
           <PlanForm
-            onConfirm={(goal, startDate, endDate) => {
+            releases={props.state.tree.releases}
+            onConfirm={(goal, releaseId, startDate, endDate) => {
               run({
                 action: 'planSprint',
                 goal,
+                ...releaseId.length > 0 ? { releaseId } : {},
                 ...startDate.length > 0 ? { startDate } : {},
                 ...endDate.length > 0 ? { endDate } : {},
               })
@@ -187,6 +221,7 @@ export function Sprints(props: { state: ScrumState; callbacks: SprintsCallbacks 
             sprint={sprint}
             tasks={allTasks.filter(t => t.sprintId === sprint.id)}
             ceremonies={props.state.ceremonies.filter(c => c.sprintId === sprint.id)}
+            releases={props.state.tree.releases}
             hasActive={hasActive}
             onRun={run}
           />
@@ -195,11 +230,17 @@ export function Sprints(props: { state: ScrumState; callbacks: SprintsCallbacks 
   )
 }
 
-/** Sprint-planning inputs (goal + optional window). */
-function PlanForm(props: { onConfirm: (goal: string, start: string, end: string) => void; onCancel: () => void }) {
+/** Sprint-planning inputs (goal + optional release link + optional window). */
+function PlanForm(props: {
+  releases: ReleaseOption[]
+  onConfirm: (goal: string, releaseId: string, start: string, end: string) => void
+  onCancel: () => void
+}) {
   const [goal, setGoal] = useState('')
+  const [releaseId, setReleaseId] = useState('')
   const [start, setStart] = useState('')
   const [end, setEnd] = useState('')
+  const confirm = () => { if (goal.trim().length > 0) props.onConfirm(goal.trim(), releaseId, start, end) }
   return (
     <>
       <input
@@ -208,14 +249,17 @@ function PlanForm(props: { onConfirm: (goal: string, start: string, end: string)
         autoFocus
         value={goal}
         onChange={(e) => { setGoal(e.target.value) }}
-        onKeyDown={(e) => { if (e.key === 'Enter' && goal.trim().length > 0) props.onConfirm(goal.trim(), start, end) }}
+        onKeyDown={(e) => { if (e.key === 'Enter') confirm() }}
       />
+      <select title="Release vinculada" value={releaseId} onChange={(e) => { setReleaseId(e.target.value) }}>
+        <option value="">— sem release —</option>
+        {props.releases.map(release => (
+          <option key={release.id} value={release.id}>🎯 {release.id} {release.name}</option>
+        ))}
+      </select>
       <input placeholder="Início (AAAA-MM-DD)" value={start} onChange={(e) => { setStart(e.target.value) }} />
       <input placeholder="Fim (AAAA-MM-DD)" value={end} onChange={(e) => { setEnd(e.target.value) }} />
-      <button
-        className="scrum-btn primary"
-        onClick={() => { if (goal.trim().length > 0) props.onConfirm(goal.trim(), start, end) }}
-      >Planejar</button>
+      <button className="scrum-btn primary" onClick={confirm}>Planejar</button>
       <button className="scrum-btn" onClick={props.onCancel}>Cancelar</button>
     </>
   )

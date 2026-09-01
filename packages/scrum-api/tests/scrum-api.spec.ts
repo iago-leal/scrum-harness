@@ -86,6 +86,20 @@ describe('scrum-api', () => {
     expect(ended.json.state.activeSprintId).toBeNull()
   })
 
+  it('links sprints to releases through the wire', async () => {
+    await act({ action: 'createRelease', name: 'v1.0' })
+    const planned = await act({ action: 'planSprint', goal: 'Ship', releaseId: 'rel-1' })
+    expect(planned.status).toBe(200)
+    expect(planned.json.result.releaseId).toBe('rel-1')
+    expect(planned.json.state.sprints[0].releaseId).toBe('rel-1')
+
+    const unlinked = await act({ action: 'updateItem', id: 'spr-1', releaseId: '' })
+    expect(unlinked.json.state.sprints[0].releaseId).toBeUndefined()
+
+    const badLink = await act({ action: 'planSprint', goal: 'x', releaseId: 'rel-9' })
+    expect(badLink.status).toBe(404)
+  })
+
   it('maps business errors onto 404/409 and keeps codes', async () => {
     const missing = await act({ action: 'startSprint', sprintId: 'spr-9' })
     expect(missing.status).toBe(404)

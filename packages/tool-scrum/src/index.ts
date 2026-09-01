@@ -43,13 +43,14 @@ export function apply(ctx: Context): void {
   ctx.tools.register(defineTool({
     name: 'scrum_tree',
     description:
-      'Read the whole SCRUM hierarchy — Release > Feature > Component > Task — plus the sprint roster. '
+      'Read the whole SCRUM hierarchy — Release > Feature > Component > Task — plus the sprint roster (each release line lists its linked sprints, each sprint its release). '
       + 'Every line starts with the item id (rel-, feat-, comp-, task-, spr-) used by the other scrum_* tools. '
       + 'Call this first to orient yourself before creating or changing items.',
     parameters: {},
     output: TEXT_OUTPUT,
     execute() {
-      const text = `${formatTree(scrum().tree())}\n\nSprints:\n${formatSprints(scrum().sprints())}`
+      const sprints = scrum().sprints()
+      const text = `${formatTree(scrum().tree(), sprints)}\n\nSprints:\n${formatSprints(sprints, scrum().releaseNames())}`
       return Promise.resolve({ text })
     },
     presentCall: () => ({ card: 'generic', title: 'Read SCRUM tree', kind: 'read' }),
@@ -126,7 +127,7 @@ export function apply(ctx: Context): void {
     description:
       'Update fields of any SCRUM item by id. The id prefix selects the level: '
       + 'rel- (title→name, targetDate, status: planned|active|released), feat- (title, status: proposed|committed|done), '
-      + 'comp- (title), task- (title, estimate), spr- (goal). Description applies to all except sprints.',
+      + 'comp- (title), task- (title, estimate), spr- (goal, releaseId — empty string unlinks). Description applies to all except sprints.',
     parameters: {
       id: { type: 'string', required: true },
       title: { type: 'string', description: 'New title / release name.' },
@@ -135,6 +136,7 @@ export function apply(ctx: Context): void {
       targetDate: { type: 'string', description: 'Releases only (ISO date).' },
       status: { type: 'string', description: 'Releases and features only.' },
       goal: { type: 'string', description: 'Sprints only.' },
+      releaseId: { type: 'string', description: 'Sprints only: link to a release (rel-N); empty string removes the link.' },
     },
     output: TEXT_OUTPUT,
     async execute(args) {
@@ -170,6 +172,7 @@ export function apply(ctx: Context): void {
       + 'optional initial selection of backlog tasks (they become its sprint backlog, column todo).',
     parameters: {
       goal: { type: 'string', required: true, description: 'The sprint goal.' },
+      releaseId: { type: 'string', description: 'Release this sprint advances (rel-N); shown in every view.' },
       startDate: { type: 'string', description: 'ISO date.' },
       endDate: { type: 'string', description: 'ISO date.' },
       taskIds: {
@@ -183,7 +186,8 @@ export function apply(ctx: Context): void {
       const sprint = await scrum().planSprint(args)
       const selected = args.taskIds === undefined || args.taskIds.length === 0
         ? '' : ` with ${args.taskIds.length} task(s)`
-      return { text: `Planned sprint ${sprint.id} #${sprint.number} "${sprint.goal}"${selected}. Start it with scrum_sprint_start.` }
+      const linked = sprint.releaseId === undefined ? '' : ` for ${sprint.releaseId}`
+      return { text: `Planned sprint ${sprint.id} #${sprint.number} "${sprint.goal}"${linked}${selected}. Start it with scrum_sprint_start.` }
     },
     presentCall: args => ({ card: 'generic', title: `Plan sprint "${args.goal}"`, kind: 'edit' }),
   }))
@@ -249,7 +253,7 @@ export function apply(ctx: Context): void {
     },
     output: TEXT_OUTPUT,
     execute(args) {
-      return Promise.resolve({ text: formatSprintStatus(scrum().sprintStatus(args.sprintId)) })
+      return Promise.resolve({ text: formatSprintStatus(scrum().sprintStatus(args.sprintId), scrum().releaseNames()) })
     },
     presentCall: () => ({ card: 'generic', title: 'Sprint status', kind: 'read' }),
   }))

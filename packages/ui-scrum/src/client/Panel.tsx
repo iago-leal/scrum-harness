@@ -56,7 +56,7 @@ export function Panel(props: PanelProps) {
   if (!open) return null
 
   const close = () => { props.actions.setOpen(false) }
-  const callbacks = { run: props.run }
+  const callbacks = { run: props.run, goToSprints: () => { props.actions.setView('sprints') } }
 
   return (
     <div

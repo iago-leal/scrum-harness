@@ -7,19 +7,35 @@
 import type { Ceremony, Sprint } from './spec.ts'
 import type { ScrumTree, SprintStatus } from './service.ts'
 
+/** Release-name lookup used to render sprint→release links. */
+export type ReleaseNames = ReadonlyMap<string, string>
+
+/** Render one sprint's release link (empty when unlinked). */
+function releaseSuffix(sprint: Sprint, names?: ReleaseNames): string {
+  if (sprint.releaseId === undefined) return ''
+  const name = names?.get(sprint.releaseId)
+  return ` → ${sprint.releaseId}${name === undefined ? '' : ` ${name}`}`
+}
+
 /**
- * Render the whole hierarchy as an indented id-first listing.
+ * Render the whole hierarchy as an indented id-first listing. When `sprints`
+ * is passed, each release line also lists the sprints linked to it.
  * @param tree - the nested hierarchy.
+ * @param sprints - sprint roster used to render release→sprint links.
  * @returns the multi-line listing (or a hint when empty).
  */
-export function formatTree(tree: ScrumTree): string {
+export function formatTree(tree: ScrumTree, sprints?: Sprint[]): string {
   if (tree.releases.length === 0) {
     return 'Empty backlog: no releases yet. Create one with scrum_release_create.'
   }
   const lines: string[] = []
   for (const release of tree.releases) {
     const target = release.targetDate === undefined ? '' : ` (target: ${release.targetDate})`
-    lines.push(`${release.id} ${release.name} [${release.status}]${target}`)
+    const linked = (sprints ?? []).filter(s => s.releaseId === release.id)
+    const sprintSuffix = linked.length === 0
+      ? ''
+      : ` (sprints: ${linked.map(s => `${s.id} ${s.status}`).join(', ')})`
+    lines.push(`${release.id} ${release.name} [${release.status}]${target}${sprintSuffix}`)
     for (const feature of release.features) {
       lines.push(`  ${feature.id} ${feature.title} [${feature.status}]`)
       for (const component of feature.components) {
@@ -36,16 +52,17 @@ export function formatTree(tree: ScrumTree): string {
 }
 
 /**
- * Render the sprint roster.
+ * Render the sprint roster, each line carrying its release link when set.
  * @param sprints - sprints newest first.
+ * @param releaseNames - release-name lookup for the link rendering.
  * @returns one line per sprint.
  */
-export function formatSprints(sprints: Sprint[]): string {
+export function formatSprints(sprints: Sprint[], releaseNames?: ReleaseNames): string {
   if (sprints.length === 0) return 'No sprints yet.'
   return sprints
     .map((s) => {
       const window = [s.startDate, s.endDate].filter(Boolean).join(' → ')
-      return `${s.id} #${s.number} "${s.goal}" [${s.status}]${window.length > 0 ? ` ${window}` : ''}`
+      return `${s.id} #${s.number} "${s.goal}" [${s.status}]${window.length > 0 ? ` ${window}` : ''}${releaseSuffix(s, releaseNames)}`
     })
     .join('\n')
 }
@@ -53,11 +70,12 @@ export function formatSprints(sprints: Sprint[]): string {
 /**
  * Render one sprint's progress summary with its board grouped by column.
  * @param status - the sprint status snapshot.
+ * @param releaseNames - release-name lookup for the link rendering.
  * @returns the multi-line summary.
  */
-export function formatSprintStatus(status: SprintStatus): string {
+export function formatSprintStatus(status: SprintStatus, releaseNames?: ReleaseNames): string {
   const { sprint, tasks, totals } = status
-  const head = `${sprint.id} #${sprint.number} "${sprint.goal}" [${sprint.status}]`
+  const head = `${sprint.id} #${sprint.number} "${sprint.goal}" [${sprint.status}]${releaseSuffix(sprint, releaseNames)}`
   const days = status.daysRemaining === undefined ? '' : `, ${status.daysRemaining} day(s) remaining`
   const progress = `${totals.done}/${totals.tasks} tasks done, ${totals.pointsDone}/${totals.points} points${days}`
   const columns = ['todo', 'in_progress', 'review', 'done'] as const

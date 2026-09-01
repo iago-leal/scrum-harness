@@ -44,12 +44,20 @@ export function Board(props: { state: ScrumState; callbacks: BoardCallbacks }) {
     .filter(t => t.sprintId === active.id)
 
   const move = (taskId: string, column: string) => { run({ action: 'moveTask', taskId, column }) }
+  const release = active.releaseId === undefined
+    ? undefined
+    : props.state.tree.releases.find(r => r.id === active.releaseId)
 
   return (
     <div>
       <div className="scrum-section-head">
         <h2>Board — {active.id} #{active.number}</h2>
         <span className="scrum-muted">{active.goal}</span>
+        {active.releaseId !== undefined && (
+          <span className="scrum-pts" title="Release vinculada">
+            🎯 {active.releaseId}{release !== undefined ? ` ${release.name}` : ''}
+          </span>
+        )}
       </div>
       <div className="scrum-board">
         {COLUMNS.map((column) => {
