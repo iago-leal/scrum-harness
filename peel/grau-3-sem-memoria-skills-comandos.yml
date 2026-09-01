@@ -1,0 +1,22 @@
+# Grau 3 — sem auto-memória, skills e comandos (a parte do `--bare` do Claude
+# Code que pula a descoberta de CLAUDE.md/AGENTS.md, skills e afins).
+# Inclui o comando humano /scrum. Hooks e LSP não são montados por estes
+# bundles, então não há row a desligar para eles.
+- id: agent-instructions
+  disabled: true
+- id: skill
+  disabled: true
+- id: skill-filesystem
+  disabled: true
+- id: skill-badge
+  disabled: true
+- id: commands
+  disabled: true
+- id: command-feedback
+  disabled: true
+- id: command-goal
+  disabled: true
+- id: command-compact
+  disabled: true
+- id: command-scrum
+  disabled: true

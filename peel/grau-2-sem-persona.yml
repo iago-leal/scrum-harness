@@ -1,0 +1,6 @@
+# Grau 2 — persona substituída por vazio (equivalente ao `--system-prompt` do
+# Claude Code). Outros plugins ainda contribuem seções de prompt; os graus 3 e 4
+# removem essas fontes.
+- id: system-prompt
+  config:
+    persona: ''
