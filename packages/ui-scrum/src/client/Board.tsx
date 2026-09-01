@@ -67,6 +67,12 @@ function columnLabel(column: string): string {
     ?? column
 }
 
+/** GitHub Projects-style colored dot marking a column's state. */
+function ColumnDot(props: { column: string }) {
+  const color = STATUS_META[props.column]?.color ?? 'var(--bgColor-neutral-emphasis, #8b93a7)'
+  return <span className="scrum-state-dot" style={{ background: color }} />
+}
+
 /**
  * Column counter, optionally WIP-aware: shows `n` or `n/limite` (red once
  * over the limit) and, when editable, clicking it opens an inline input —
@@ -152,6 +158,7 @@ function Kanban(props: {
           >
             {props.heads !== false && (
               <div className="scrum-col-head">
+                <ColumnDot column={column} />
                 {columnLabel(column)}
                 <WipCount
                   count={props.headCounts?.[column] ?? inColumn.length}
@@ -206,6 +213,7 @@ function BoardHeads(props: { columns: readonly string[]; items: BoardItem[]; wip
         return (
           <div key={column} className="scrum-col heads-only">
             <div className="scrum-col-head">
+              <ColumnDot column={column} />
               {columnLabel(column)}
               <WipCount
                 count={count}

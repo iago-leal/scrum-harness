@@ -25,6 +25,8 @@ await build({
   platform: 'browser',
   target: 'es2022',
   jsx: 'automatic',
+  // Primer token stylesheets (@primer/primitives) ride the bundle as strings.
+  loader: { '.css': 'text' },
   sourcemap: true,
   external: EXTERNALS,
   define: { 'process.env.NODE_ENV': '"production"' },

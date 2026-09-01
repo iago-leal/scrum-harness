@@ -16,12 +16,13 @@ export interface KindMeta {
   color: string
 }
 
-/** Work-item kinds → icon identity (palette in Azure DevOps spirit). */
+/** Work-item kinds → icon identity (Primer badge tokens; the old artisanal
+ * hexes — already GitHub-scale values — remain as fallbacks). */
 export const KIND_META: Record<'release' | 'feature' | 'component' | 'task', KindMeta> = {
-  release: { glyph: 'R', label: 'Release', color: '#8250df' },
-  feature: { glyph: 'F', label: 'Função', color: '#0969da' },
-  component: { glyph: 'C', label: 'Componente', color: '#1a7f37' },
-  task: { glyph: 'T', label: 'Tarefa', color: '#b58814' },
+  release: { glyph: 'R', label: 'Release', color: 'var(--bgColor-done-emphasis, #8250df)' },
+  feature: { glyph: 'F', label: 'Função', color: 'var(--bgColor-accent-emphasis, #0969da)' },
+  component: { glyph: 'C', label: 'Componente', color: 'var(--bgColor-success-emphasis, #1a7f37)' },
+  task: { glyph: 'T', label: 'Tarefa', color: 'var(--bgColor-attention-emphasis, #b58814)' },
 }
 
 /** One status' dot color and human label. */
@@ -30,19 +31,24 @@ export interface StatusMeta {
   color: string
 }
 
-/** Status catalog across items, sprints and board columns. */
+/** Status catalog across items, sprints and board columns (dot colors are
+ * Primer state-badge tokens with the artisanal hexes as fallbacks). */
+const NEUTRAL = 'var(--bgColor-neutral-emphasis, #8b93a7)'
+const ACCENT = 'var(--bgColor-accent-emphasis, #2f6fed)'
+const ATTENTION = 'var(--bgColor-attention-emphasis, #d99a1b)'
+const SUCCESS = 'var(--bgColor-success-emphasis, #2da44e)'
 export const STATUS_META: Record<string, StatusMeta> = {
-  backlog: { label: 'Backlog', color: '#8b93a7' },
-  todo: { label: 'A fazer', color: '#8b93a7' },
-  in_progress: { label: 'Em andamento', color: '#2f6fed' },
-  review: { label: 'Revisão', color: '#d99a1b' },
-  done: { label: 'Concluído', color: '#2da44e' },
-  proposed: { label: 'Proposta', color: '#8b93a7' },
-  committed: { label: 'Comprometida', color: '#2f6fed' },
-  planned: { label: 'Planejada', color: '#8b93a7' },
-  active: { label: 'Ativa', color: '#2f6fed' },
-  released: { label: 'Liberada', color: '#2da44e' },
-  completed: { label: 'Concluída', color: '#2da44e' },
+  backlog: { label: 'Backlog', color: NEUTRAL },
+  todo: { label: 'A fazer', color: NEUTRAL },
+  in_progress: { label: 'Em andamento', color: ACCENT },
+  review: { label: 'Revisão', color: ATTENTION },
+  done: { label: 'Concluído', color: SUCCESS },
+  proposed: { label: 'Proposta', color: NEUTRAL },
+  committed: { label: 'Comprometida', color: ACCENT },
+  planned: { label: 'Planejada', color: NEUTRAL },
+  active: { label: 'Ativa', color: ACCENT },
+  released: { label: 'Liberada', color: SUCCESS },
+  completed: { label: 'Concluída', color: SUCCESS },
 }
 
 /** Colored work-item type icon (small monogram square). */
@@ -57,7 +63,7 @@ export function TypeIcon(props: { kind: keyof typeof KIND_META }) {
 
 /** Colored state dot + label (unknown statuses degrade to a grey dot). */
 export function StateDot(props: { status: string }) {
-  const meta = STATUS_META[props.status] ?? { label: props.status, color: '#8b93a7' }
+  const meta = STATUS_META[props.status] ?? { label: props.status, color: NEUTRAL }
   return (
     <span className="scrum-state">
       <span className="scrum-state-dot" style={{ background: meta.color }} />

@@ -15,6 +15,7 @@ import { act, fetchState } from './api.ts'
 import { createScrumStore } from './store.ts'
 import { Panel } from './Panel.tsx'
 import type { PanelInjected } from './Panel.tsx'
+import { PRIMER_CSS } from './primer.ts'
 import { ScrumButton } from './ScrumButton.tsx'
 import { SCRUM_CSS } from './styles.ts'
 
@@ -31,7 +32,8 @@ export function apply(ctx: ClientContext): void {
   ctx.effect(() => {
     const tag = document.createElement('style')
     tag.dataset.plugin = '@scrum-harness/ui'
-    tag.textContent = SCRUM_CSS
+    // Tokens first, then our sheet: the board styles consume var(--…) freely.
+    tag.textContent = `${PRIMER_CSS}\n${SCRUM_CSS}`
     document.head.appendChild(tag)
     return () => { tag.remove() }
   }, 'ui-scrum: stylesheet')

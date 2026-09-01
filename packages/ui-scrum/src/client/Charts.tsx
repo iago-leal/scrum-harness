@@ -68,14 +68,14 @@ export function Velocity(props: { sprints: WireSprint[]; stats: WireSprintStats[
           const y = yOf(bar.pts)
           return (
             <g key={bar.sprint.id}>
-              <rect x={x} y={y} width={barWidth} height={chartHeight - y} rx={3} fill="#2f6fed" opacity={0.85} />
-              <text x={x + barWidth / 2} y={y - 4} textAnchor="middle" fontSize={10} fill="#3f4657">{bar.pts}</text>
-              <text x={x + barWidth / 2} y={chartHeight + 14} textAnchor="middle" fontSize={10} fill="#6b7280">#{bar.sprint.number}</text>
+              <rect x={x} y={y} width={barWidth} height={chartHeight - y} rx={3} fill="var(--bgColor-accent-emphasis, #2f6fed)" opacity={0.85} />
+              <text x={x + barWidth / 2} y={y - 4} textAnchor="middle" fontSize={10} fill="var(--fgColor-default, #3f4657)">{bar.pts}</text>
+              <text x={x + barWidth / 2} y={chartHeight + 14} textAnchor="middle" fontSize={10} fill="var(--fgColor-muted, #6b7280)">#{bar.sprint.number}</text>
             </g>
           )
         })}
-        <line x1={4} y1={avgY} x2={width - 4} y2={avgY} stroke="#d99a1b" strokeDasharray="5 4" strokeWidth={1.5} />
-        <line x1={4} y1={chartHeight} x2={width - 4} y2={chartHeight} stroke="#c9cedb" strokeWidth={1} />
+        <line x1={4} y1={avgY} x2={width - 4} y2={avgY} stroke="var(--bgColor-attention-emphasis, #d99a1b)" strokeDasharray="5 4" strokeWidth={1.5} />
+        <line x1={4} y1={chartHeight} x2={width - 4} y2={chartHeight} stroke="var(--borderColor-default, #c9cedb)" strokeWidth={1} />
       </svg>
     </div>
   )
@@ -131,18 +131,18 @@ export function Burndown(props: { sprint: WireSprint; stats?: WireSprintStats })
         <span className="scrum-muted"> — restante real × ideal ({dayLabel(days[0] ?? start)} → {dayLabel(days[dayCount] ?? end)})</span>
       </div>
       <svg viewBox={`0 0 ${width} ${height}`} style={{ width: 560, maxWidth: '100%' }} role="img">
-        <text x={pad.left - 6} y={yOf(total) + 4} textAnchor="end" fontSize={10} fill="#6b7280">{total}</text>
-        <text x={pad.left - 6} y={yOf(0) + 4} textAnchor="end" fontSize={10} fill="#6b7280">0</text>
-        <line x1={pad.left} y1={yOf(0)} x2={width - pad.right} y2={yOf(0)} stroke="#c9cedb" strokeWidth={1} />
-        <polyline points={idealPoints} fill="none" stroke="#8b93a7" strokeWidth={1.5} strokeDasharray="6 4" />
+        <text x={pad.left - 6} y={yOf(total) + 4} textAnchor="end" fontSize={10} fill="var(--fgColor-muted, #6b7280)">{total}</text>
+        <text x={pad.left - 6} y={yOf(0) + 4} textAnchor="end" fontSize={10} fill="var(--fgColor-muted, #6b7280)">0</text>
+        <line x1={pad.left} y1={yOf(0)} x2={width - pad.right} y2={yOf(0)} stroke="var(--borderColor-default, #c9cedb)" strokeWidth={1} />
+        <polyline points={idealPoints} fill="none" stroke="var(--bgColor-neutral-emphasis, #8b93a7)" strokeWidth={1.5} strokeDasharray="6 4" />
         {realPoints.length > 0 && (
-          <polyline points={realPoints} fill="none" stroke="#2f6fed" strokeWidth={2} />
+          <polyline points={realPoints} fill="none" stroke="var(--bgColor-accent-emphasis, #2f6fed)" strokeWidth={2} />
         )}
         {realDays.map((day, index) => (
-          <circle key={day} cx={xOf(index)} cy={yOf(Math.max(0, remainingAt(day)))} r={2.5} fill="#2f6fed" />
+          <circle key={day} cx={xOf(index)} cy={yOf(Math.max(0, remainingAt(day)))} r={2.5} fill="var(--bgColor-accent-emphasis, #2f6fed)" />
         ))}
-        <text x={xOf(0)} y={height - 4} textAnchor="start" fontSize={10} fill="#6b7280">{dayLabel(days[0] ?? start)}</text>
-        <text x={xOf(dayCount)} y={height - 4} textAnchor="end" fontSize={10} fill="#6b7280">{dayLabel(days[dayCount] ?? end)}</text>
+        <text x={xOf(0)} y={height - 4} textAnchor="start" fontSize={10} fill="var(--fgColor-muted, #6b7280)">{dayLabel(days[0] ?? start)}</text>
+        <text x={xOf(dayCount)} y={height - 4} textAnchor="end" fontSize={10} fill="var(--fgColor-muted, #6b7280)">{dayLabel(days[dayCount] ?? end)}</text>
       </svg>
       {donePtsWithoutStamp > 0 && (
         <div className="scrum-muted">

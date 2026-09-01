@@ -115,6 +115,9 @@ export function Panel(props: PanelProps) {
   return (
     <div
       className="scrum-overlay"
+      // Activates (and scopes) the Primer color theme of primer.ts.
+      data-color-mode="light"
+      data-light-theme="light"
       onMouseDown={(e) => { if (e.target === e.currentTarget) close() }}
     >
       <div className="scrum-panel">

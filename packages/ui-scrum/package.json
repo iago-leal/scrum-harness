@@ -29,5 +29,8 @@
   },
   "peerDependencies": {
     "@deepseek-ai/cordis": "*"
+  },
+  "devDependencies": {
+    "@primer/primitives": "^11.10.0"
   }
 }
