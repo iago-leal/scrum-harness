@@ -1,0 +1,25 @@
+# The SCRUM bundle patch: applied over dsh-base + dsh-web-app. The storage
+# hub, json backend and storage-domain rows already exist in the web layer;
+# this bundle only adds the SCRUM rows on top.
+#
+# Row order carries no load semantics (activation is service-availability
+# driven): scrum-domain waits for storageDomain, tool-scrum for tools+scrum,
+# command-scrum for commands+scrum, scrum-api for webServer+scrum.
+
+- insert:
+    - id: scrum-domain
+      name: '@scrum-harness/domain'
+
+    - id: tool-scrum
+      name: '@scrum-harness/tool-scrum'
+
+    - id: command-scrum
+      name: '@scrum-harness/command-scrum'
+
+    - id: scrum-api
+      name: '@scrum-harness/scrum-api'
+
+    # Browser surface: the dsh.client declaration on this package puts the
+    # bundle into the web boot graph; the node half is an empty apply.
+    - id: ui-scrum
+      name: '@scrum-harness/ui'

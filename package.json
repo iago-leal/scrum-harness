@@ -1,0 +1,37 @@
+{
+  "name": "scrum-harness",
+  "private": true,
+  "version": "0.1.0",
+  "description": "SCRUM process plugins for DeepSeek Harness: Release > Feature > Component > Task hierarchy, sprints, ceremonies, tools, commands and a web board",
+  "type": "module",
+  "workspaces": [
+    "packages/*"
+  ],
+  "scripts": {
+    "build": "tsc --build",
+    "clean": "tsc --build --clean",
+    "test": "vitest run",
+    "typecheck": "tsc --build --dry"
+  },
+  "devDependencies": {
+    "@deepseek-ai/cordis": "file:../deepseek-harness/vendor/cordis",
+    "@deepseek-ai/dsh-commands": "file:../deepseek-harness/packages/interaction/commands",
+    "@deepseek-ai/dsh-host-webserver": "file:../deepseek-harness/packages/host/webserver",
+    "@deepseek-ai/dsh-storage": "file:../deepseek-harness/packages/storage/storage",
+    "@deepseek-ai/dsh-storage-domain": "file:../deepseek-harness/packages/storage/storage-domain",
+    "@deepseek-ai/dsh-storage-json": "file:../deepseek-harness/packages/storage/storage-json",
+    "@deepseek-ai/dsh-tools": "file:../deepseek-harness/packages/core/tools",
+    "@deepseek-ai/schemastery": "file:../deepseek-harness/vendor/schemastery",
+    "typescript": "^5.9.2",
+    "vitest": "^3.2.4",
+    "zod": "file:../deepseek-harness/node_modules/.pnpm/zod@4.4.3/node_modules/zod",
+    "@deepseek-ai/dsh-system-prompt": "file:../deepseek-harness/packages/core/system-prompt",
+    "@deepseek-ai/dsh-client-ui-slots": "file:../deepseek-harness/packages/client/ui-slots",
+    "@deepseek-ai/dsh-client-ui-sidebar": "file:../deepseek-harness/packages/client/ui-sidebar",
+    "@deepseek-ai/dsh-client-ui-layout": "file:../deepseek-harness/packages/client/ui-layout",
+    "@deepseek-ai/dsh-client-runtime": "file:../deepseek-harness/packages/client/runtime",
+    "react": "file:../deepseek-harness/node_modules/.pnpm/react@18.3.1/node_modules/react",
+    "@types/react": "file:../deepseek-harness/node_modules/.pnpm/@types+react@18.3.31/node_modules/@types/react",
+    "esbuild": "^0.25.0"
+  }
+}

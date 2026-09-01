@@ -1,0 +1,16 @@
+{
+  "name": "dsh-profile-scrum",
+  "private": true,
+  "dependencies": {
+    "@scrum-harness/bundle": "file:../../../packages/bundle-scrum"
+  },
+  "dsh": {
+    "profile": {
+      "bundles": [
+        "@deepseek-ai/dsh-base",
+        "@deepseek-ai/dsh-web-app",
+        "@scrum-harness/bundle"
+      ]
+    }
+  }
+}

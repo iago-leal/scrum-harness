@@ -1,0 +1,26 @@
+{
+  "name": "@scrum-harness/bundle",
+  "version": "0.1.0",
+  "description": "DeepSeek Harness profile bundle enabling the SCRUM process: domain service, model tools, /scrum command and the web board API over the web profile",
+  "type": "module",
+  "license": "MIT",
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  },
+  "exports": {
+    "./cordis.patch.yml": "./cordis.patch.yml",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "cordis.patch.yml"
+  ],
+  "dependencies": {
+    "@scrum-harness/domain": "^0.1.0",
+    "@scrum-harness/tool-scrum": "^0.1.0",
+    "@scrum-harness/command-scrum": "^0.1.0",
+    "@scrum-harness/scrum-api": "^0.1.0",
+    "@scrum-harness/ui": "^0.1.0"
+  }
+}

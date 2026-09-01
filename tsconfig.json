@@ -1,0 +1,20 @@
+{
+  "files": [],
+  "references": [
+    {
+      "path": "packages/scrum-domain"
+    },
+    {
+      "path": "packages/tool-scrum"
+    },
+    {
+      "path": "packages/command-scrum"
+    },
+    {
+      "path": "packages/scrum-api"
+    },
+    {
+      "path": "packages/ui-scrum"
+    }
+  ]
+}
