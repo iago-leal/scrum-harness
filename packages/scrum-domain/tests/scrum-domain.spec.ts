@@ -13,7 +13,7 @@ import Storage from '@deepseek-ai/dsh-storage'
 import * as StorageJson from '@deepseek-ai/dsh-storage-json'
 import * as StorageDomain from '@deepseek-ai/dsh-storage-domain'
 import * as StorageMemory from '@scrum-harness/test-support/src/index.ts'
-import { CONTRACT_REQ, contractReview } from '@scrum-harness/test-support/src/fixtures.ts'
+import { CONTRACT_DESIGN, CONTRACT_REQ, contractReview } from '@scrum-harness/test-support/src/fixtures.ts'
 import { ScrumService, ScrumError } from '../src/service.ts'
 import type { ScrumBoard } from '../src/service.ts'
 import { boardNameOf, GLOBAL_BOARD_NAME } from '../src/boards.ts'
@@ -614,7 +614,7 @@ async function toDesign(id: string) {
  */
 async function toTdd(id: string) {
   await toDesign(id)
-  await scrum.updateItem(id, { design: 'erDiagram …' })
+  await scrum.updateItem(id, { design: CONTRACT_DESIGN })
   await scrum.advancePhase(id)
   return scrum.createTask({ componentId: id, title: '[test] first task' })
 }
@@ -695,7 +695,7 @@ describe('spiral gates (R3, R4, R5)', () => {
     const id = await seedComponent()
     await toDesign(id)
     await expect(scrum.advancePhase(id)).rejects.toThrow(/design/)
-    await scrum.updateItem(id, { design: 'erDiagram' })
+    await scrum.updateItem(id, { design: CONTRACT_DESIGN })
     expect((await scrum.advancePhase(id)).phase).toBe('tdd')
     await expect(scrum.advancePhase(id)).rejects.toThrow(/no task under the component/)
     await scrum.createTask({ componentId: id, title: 't' })
@@ -1168,7 +1168,7 @@ describe('task kind (comp-45)', () => {
 /** Carry a component to `tdd` with NO task (the gate scenarios add their own). */
 async function toEmptyTdd(id: string) {
   await toDesign(id)
-  await scrum.updateItem(id, { design: 'erDiagram …' })
+  await scrum.updateItem(id, { design: CONTRACT_DESIGN })
   await scrum.advancePhase(id)
 }
 
@@ -1245,7 +1245,7 @@ describe('tdd gate (comp-45 R3)', () => {
     await fresh.updateItem(comp.id, { requirements: CONTRACT_REQ })
     await fresh.updateItem(comp.id, { requirementsReview: contractReview(fresh.reviewBrief(comp.id).requirements.digest) })
     await fresh.advancePhase(comp.id)
-    await fresh.updateItem(comp.id, { design: 'd' })
+    await fresh.updateItem(comp.id, { design: CONTRACT_DESIGN })
     await fresh.advancePhase(comp.id)
     for (let i = 1; i <= 8; i += 1) await fresh.createTask({ componentId: comp.id, title: `filler ${i}` })
     const test9 = await fresh.createTask({ componentId: comp.id, title: '[test] nine' })
@@ -1357,7 +1357,7 @@ describe('phase readiness (comp-46 R1)', () => {
     const id = await seedComponent()
     await toDesign(id)
     expect(scrum.phaseReadiness(id)).toMatchObject({ phase: 'design', next: 'tdd', ok: false, reasons: ['design is empty'], status: 'in_progress' })
-    await scrum.updateItem(id, { design: 'D' })
+    await scrum.updateItem(id, { design: CONTRACT_DESIGN })
     expect(scrum.phaseReadiness(id)).toMatchObject({ phase: 'design', next: 'tdd', ok: true, reasons: [] })
     await scrum.advancePhase(id)
 
@@ -1411,5 +1411,209 @@ describe('phase readiness (comp-46 R1)', () => {
     let code = ''
     try { scrum.phaseReadiness(other.id) } catch (e) { code = (e as { code: string }).code }
     expect(code).toBe('in-trash')
+  })
+})
+
+// ── comp-49: the traceability matrix read by the gates (R4) and the impact query (R5) ──
+// Written BEFORE the code (TDD).
+
+const TWO_IDS_REQ = '---\nversion: 2\nstatus: approved\n---\nR1 — first.\nR2 — second.'
+/** A design frontmatter with the given trace entry lines (already indented) and a body. */
+function designWith(...entries: string[]): string {
+  return `---\ntraces:\n${entries.join('\n')}\n---\nDesign.`
+}
+/** A validation artifact honoring the ValidationContract plus the given trace lines. */
+function validationWith(...entries: string[]): string {
+  const traces = entries.length === 0 ? 'traces: []' : `traces:\n${entries.join('\n')}`
+  return `---\nvalidated_at: 2026-09-02\nsuite: { tests: 97, passed: 97, wall_seconds: 12, budget_seconds: 15 }\ntypecheck: clean\n${traces}\n---\nSuite green.`
+}
+
+describe('trace gates (comp-49 R4)', () => {
+  it('R4: design → tdd — empty stays exactly "design is empty"; a filled design must carry the matrix, every reason named', async () => {
+    const id = await seedComponent()
+    await toDesign(id)
+    expect(scrum.phaseReadiness(id).reasons).toEqual(['design is empty'])
+    await scrum.updateItem(id, { design: 'D' })
+    expect(scrum.phaseReadiness(id).reasons).toEqual(['`design` frontmatter missing or malformed (must start on line 1 with ---)'])
+    await scrum.updateItem(id, { design: '---\nversion: 1\n---\nD' })
+    expect(scrum.phaseReadiness(id).reasons).toEqual(['`design` frontmatter: traces missing (one `- { req, files, tests }` per line)'])
+    await scrum.updateItem(id, { design: designWith('  - { req: [R9], files: [src/a.ts], tests: [] }') })
+    const readiness = scrum.phaseReadiness(id)
+    expect(readiness.reasons).toEqual([
+      'traces name unknown requirement(s) R9 (ids found: R1)',
+      'requirement(s) without trace: R1 (add an entry; files: [] for a requirement without code)',
+    ])
+    const refusal = await refusalOf(id)
+    expect(refusal).toContain(readiness.reasons.join('; '))
+    expect(refusal).toMatch(/cannot advance from design to tdd/)
+    await scrum.updateItem(id, { design: CONTRACT_DESIGN })
+    expect(scrum.phaseReadiness(id)).toMatchObject({ ok: true, reasons: [] })
+    expect((await scrum.advancePhase(id)).phase).toBe('tdd')
+  })
+
+  it('R4: done — the effective matrix closes against the CURRENT ids; the as-built may cover what the design did not, or lose coverage', async () => {
+    const id = await seedComponent()
+    await toValidation(id)
+    await scrum.updateItem(id, { validation: VALID_VALIDATION })
+    expect(scrum.doneReadiness(id)).toEqual({ ok: true })
+    // A requirement added during construction: the design matrix no longer covers it.
+    await scrum.updateItem(id, { requirements: TWO_IDS_REQ })
+    expect(scrum.phaseReadiness(id)).toMatchObject({ phase: 'validation', next: 'done', ok: false })
+    expect(scrum.phaseReadiness(id).reasons).toEqual(['requirement(s) without trace: R2 (add an entry; files: [] for a requirement without code)'])
+    await expect(scrum.updateItem(id, { status: 'done' })).rejects.toMatchObject({ code: 'done-gate' })
+    await expect(scrum.updateItem(id, { status: 'done' })).rejects.toThrow(/without trace: R2/)
+    // An explicit empty as-built is an error, not a fallback.
+    await scrum.updateItem(id, { validation: validationWith() })
+    expect(scrum.phaseReadiness(id).reasons).toEqual(['`validation` frontmatter: traces is empty'])
+    // An as-built that loses R1.
+    await scrum.updateItem(id, { validation: validationWith('  - { req: [R2], files: [], tests: [] }') })
+    expect(scrum.phaseReadiness(id).reasons).toEqual(['requirement(s) without trace: R1 (add an entry; files: [] for a requirement without code)'])
+    // An as-built that covers both closes the matrix — done passes through the same gate.
+    await scrum.updateItem(id, { validation: validationWith('  - { req: [R1], files: [src/a.ts], tests: [tests/a.spec.ts] }', '  - { req: [R2], files: [], tests: [] }') })
+    expect(scrum.phaseReadiness(id)).toMatchObject({ ok: true, reasons: [] })
+    expect(componentOf(id).traces).toMatchObject({ source: 'validation', untraced: [], nocode: ['R2'] })
+    expect((await scrum.updateItem(id, { status: 'done' })).status).toBe('done')
+  })
+
+  it('R4: without any source the done gate speaks about the design; the other done reasons keep their order', async () => {
+    const id = await seedComponent()
+    await toValidation(id)
+    await scrum.updateItem(id, { design: '', validation: VALID_VALIDATION })
+    expect(scrum.phaseReadiness(id).reasons).toEqual(['`design` is empty'])
+    await scrum.updateItem(id, { validation: '' })
+    const reasons = scrum.phaseReadiness(id).reasons
+    expect(reasons[0]).toBe('`validation` is empty')
+    expect(reasons[reasons.length - 1]).toBe('`design` is empty')
+  })
+
+  it('R5: tree() annotates traces on every component — new (source null, no issues), planned, and legacy (issues, never blocking)', async () => {
+    const id = await seedComponent()
+    expect(componentOf(id).traces).toEqual({
+      source: null, entries: [], ids: [], untraced: [], unknown: [], nocode: [], unproven: [], files: [], tests: [], issues: [],
+    })
+    await scrum.updateItem(id, { requirements: CONTRACT_REQ, design: CONTRACT_DESIGN })
+    expect(componentOf(id).traces).toMatchObject({ source: 'design', ids: ['R1'], files: ['src/a.ts'], tests: ['tests/a.spec.ts'], untraced: [], issues: [] })
+    const legacy = await scrum.createComponent({ featureId: 'feat-1', title: 'legacy' })
+    await scrum.updateItem(legacy.id, {
+      requirements: TWO_IDS_REQ, design: designWith('  - { req: [R1], files: [processo], tests: ["validação do comp"] }'),
+    })
+    const traces = componentOf(legacy.id).traces
+    expect(traces).toMatchObject({ source: 'design', untraced: ['R2'], files: ['processo'], tests: ['validação do comp'] })
+    expect(traces.issues).toEqual([
+      'traces[0].tests[0] "validação do comp" is not a workspace-relative path (whitespace)',
+      'requirement(s) without trace: R2 (add an entry; files: [] for a requirement without code)',
+    ])
+    expect(componentOf(legacy.id).readyForDone).toBe(false)
+    expect(componentOf(legacy.id).readiness).toMatchObject({ phase: 'requirements' })
+    expect(scrum.reviewBrief(legacy.id).requirements.ids).toEqual(['R1', 'R2'])
+  })
+})
+
+describe('impact (comp-49 R5)', () => {
+  /** Three components: live, archived and trashed, all tracing packages/a/src/x.ts. */
+  async function seedImpact() {
+    const live = await seedComponent()
+    await scrum.updateItem(live, {
+      requirements: TWO_IDS_REQ,
+      design: designWith(
+        '  - { req: [R1], files: [packages/a/src/x.ts], tests: [packages/a/tests/x.spec.ts] }',
+        '  - { req: [R2], files: [packages/a/src/y.ts, packages/b/src], tests: [] }',
+      ),
+    })
+    const archived = await scrum.createComponent({ featureId: 'feat-1', title: 'archived one' })
+    await scrum.updateItem(archived.id, {
+      requirements: CONTRACT_REQ,
+      design: designWith('  - { req: [R1], files: [packages/a/src/x.ts], tests: [packages/a/tests/other.spec.ts, packages/a/src/x.ts] }'),
+    })
+    await scrum.archiveItem(archived.id)
+    const trashed = await scrum.createComponent({ featureId: 'feat-1', title: 'trashed one' })
+    await scrum.updateItem(trashed.id, { requirements: CONTRACT_REQ, design: designWith('  - { req: [R1], files: [packages/a/src/x.ts], tests: [] }') })
+    await scrum.deleteItem(trashed.id)
+    return { live, archived: archived.id, trashed: trashed.id }
+  }
+
+  it('R5: a file query — hits by files, by tests, or both; archived included and flagged; trashed excluded; ordered by id', async () => {
+    const { live, archived } = await seedImpact()
+    const report = scrum.impact('packages/a/src/x.ts')
+    expect(report).toMatchObject({ path: 'packages/a/src/x.ts', form: 'file', traced: true })
+    expect(report.hits.map(h => [h.id, h.via, h.archived])).toEqual([[live, 'files', false], [archived, 'both', true]])
+    expect(report.hits[0]).toMatchObject({
+      title: 'OAuth flow', status: 'proposed', phase: 'requirements', req: ['R1'], matched: ['packages/a/src/x.ts'],
+      files: ['packages/a/src/x.ts'], tests: ['packages/a/tests/x.spec.ts'],
+    })
+    expect(report.missing).toBeUndefined()
+    expect(report.untracedOnDisk).toBeUndefined()
+    expect(scrum.impact('packages/a/tests/x.spec.ts').hits.map(h => [h.id, h.via])).toEqual([[live, 'tests']])
+    expect(scrum.impact('packages/none.ts')).toMatchObject({ form: 'file', traced: false, hits: [] })
+  })
+
+  it('R5: a directory query matches everything under it; the root matches everything; matched lists what answered', async () => {
+    const { live, archived } = await seedImpact()
+    const dir = scrum.impact('packages/a/src')
+    expect(dir).toMatchObject({ path: 'packages/a/src', form: 'directory', traced: true })
+    expect(dir.hits.map(h => [h.id, h.req, h.matched])).toEqual([
+      [live, ['R1'], ['packages/a/src/x.ts']],
+      [live, ['R2'], ['packages/a/src/y.ts']],
+      [archived, ['R1'], ['packages/a/src/x.ts']],
+    ])
+    expect(scrum.impact('packages/a/sr').hits).toEqual([])
+    for (const root of ['', '.', './']) {
+      const all = scrum.impact(root)
+      expect(all).toMatchObject({ path: '', form: 'directory' })
+      expect(all.hits).toHaveLength(3)
+    }
+    // A traced directory answers a query on itself or above it.
+    expect(scrum.impact('packages/b').hits.map(h => h.matched)).toEqual([['packages/b/src']])
+  })
+
+  it('R5: with onDisk — untraced files on disk, traced paths gone from disk (a traced directory prefix is not missing), truncation', async () => {
+    await seedImpact()
+    const report = scrum.impact('packages/a', {
+      onDisk: ['packages/a/src/x.ts', 'packages/a/src/new.ts', './packages/a/tests/x.spec.ts', 'packages/a/README.md'],
+    })
+    expect(report.untracedOnDisk).toEqual(['packages/a/README.md', 'packages/a/src/new.ts'])
+    expect(report.missing).toEqual(['packages/a/src/y.ts', 'packages/a/tests/other.spec.ts'])
+    // The traced directory packages/b/src is a prefix of an on-disk file: present, not missing.
+    const b = scrum.impact('packages/b', { onDisk: ['packages/b/src/z.ts'] })
+    expect(b.missing).toEqual([])
+    expect(b.untracedOnDisk).toEqual(['packages/b/src/z.ts'])
+    const truncated = scrum.impact('packages/a', { onDisk: ['packages/a/src/new.ts'], onDiskTruncated: true })
+    expect(truncated.missing).toBeUndefined()
+    expect(truncated.untracedOnDisk).toEqual(['packages/a/src/new.ts'])
+    expect(truncated.onDiskTruncated).toBe(true)
+    // form: a file that exists stays a file; an absent file with no hits stays a file.
+    expect(scrum.impact('packages/a/src/x.ts', { onDisk: ['packages/a/src/x.ts'] }).form).toBe('file')
+    expect(scrum.impact('packages/gone.ts', { onDisk: [] }).form).toBe('file')
+    expect(scrum.impact('packages/gone', { onDisk: ['packages/gone/a.ts'] }).form).toBe('directory')
+  })
+
+  it('R5: an absolute or parent-escaping query is refused with invalid-input', async () => {
+    await seedImpact()
+    for (const bad of ['/abs/x.ts', 'C:/x.ts', '../x.ts', 'a/../../x']) {
+      expect(() => scrum.impact(bad)).toThrow(ScrumError)
+      let code = ''
+      try { scrum.impact(bad) } catch (e) { code = (e as { code: string }).code }
+      expect(code).toBe('invalid-input')
+    }
+  })
+
+  it('R5: tracedFiles is the distinct sorted union over non-trashed components; traceMatrix/traceContract accept archived, refuse trashed and unknown', async () => {
+    const { live, archived, trashed } = await seedImpact()
+    expect(scrum.tracedFiles()).toEqual([
+      'packages/a/src/x.ts', 'packages/a/src/y.ts', 'packages/a/tests/other.spec.ts', 'packages/a/tests/x.spec.ts', 'packages/b/src',
+    ])
+    expect(scrum.traceMatrix(live)).toMatchObject({ source: 'design', untraced: [], unproven: ['R2'] })
+    expect(scrum.traceMatrix(archived)).toMatchObject({ source: 'design', ids: ['R1'] })
+    expect(() => scrum.traceMatrix(trashed)).toThrow(/in the trash/)
+    let code = ''
+    try { scrum.traceMatrix(trashed) } catch (e) { code = (e as { code: string }).code }
+    expect(code).toBe('in-trash')
+    try { scrum.traceMatrix('comp-99') } catch (e) { code = (e as { code: string }).code }
+    expect(code).toBe('not-found')
+    expect(scrum.traceContract(live)).toEqual({ ok: true })
+    expect(scrum.traceContract(live, 'validation')).toMatchObject({ ok: false, reasons: ['`validation` is empty'] })
+    expect(scrum.traceContract(archived)).toEqual({ ok: true })
+    expect(scrum.traceGate(live, 'design')).toBe('design → tdd')
+    expect(scrum.traceGate(live, 'validation')).toBeNull()
   })
 })

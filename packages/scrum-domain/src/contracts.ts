@@ -123,10 +123,34 @@ export const requirementsMetaSchema = z.object({
 })
 export type RequirementsMeta = z.infer<typeof requirementsMetaSchema>
 
+/**
+ * The requirement-id shape at line start (comp-49 R2): optional list/number
+ * marker, optional heading marker, bold on either side, `R<n>[letter]`,
+ * then one of the four separators followed by whitespace, a closing bold or
+ * the end of the line. No flags: apply it per line with `exec`.
+ */
+export const REQUIREMENT_ID = /^\s*(?:[-*+]\s+|\d+[.)]\s+)?(?:#{1,6}\s+)?(?:\*\*)?(R\d+[a-z]?)(?:\*\*)?\s*[—–:-](?=[\s*]|$)/
+
 /** The requirements artifact: versioned, stamped by a human, with a body. */
 export class RequirementsContract extends ArtifactContract<RequirementsMeta> {
   constructor() {
     super('requirements', requirementsMetaSchema)
+  }
+
+  /**
+   * The requirement ids declared in the body (comp-49 R2): one source of
+   * truth for the traceability matrix — the frontmatter `ids:` key of older
+   * artifacts is ignored. Unique, in order of appearance.
+   * @param component - the component holding the requirements.
+   * @returns the ids (`R1`, `R7b`, …), possibly empty.
+   */
+  ids(component: Component): string[] {
+    const found: string[] = []
+    for (const line of this.body(component).split('\n')) {
+      const id = REQUIREMENT_ID.exec(line)?.[1]
+      if (id !== undefined && !found.includes(id)) found.push(id)
+    }
+    return found
   }
 
   /** (a) frontmatter with integer version ≥ 1 and `status: approved`; (b) non-empty body. */

@@ -287,6 +287,43 @@ button.scrum-chev:hover { background: var(--bgColor-neutral-muted, rgba(70, 90, 
 .scrum-details-meta { display: flex; align-items: center; gap: 8px; margin-top: 10px; }
 .scrum-details-foot { display: flex; justify-content: flex-end; gap: 6px; margin-top: 14px; }
 
+/* ---- Traceability section of a component (comp-49 R7): read-only matrix ---- */
+.scrum-wi .scrum-trace-section { margin: 14px 16px 0; }
+.scrum-trace-head {
+  display: flex; align-items: baseline; gap: 10px; margin-bottom: 6px;
+  font-size: 12px; font-weight: 600; color: var(--fgColor-default, #1d1f24);
+}
+.scrum-trace-source { font-weight: 400; color: var(--fgColor-muted, #6b7280); font-size: 11.5px; }
+.scrum-trace {
+  width: 100%; border-collapse: collapse; font-size: 12px;
+  border: 1px solid var(--borderColor-default, #d0d7de); border-radius: var(--borderRadius-medium, 6px);
+}
+.scrum-trace th {
+  text-align: left; font-weight: 600; font-size: 11px; padding: 5px 8px;
+  background: var(--bgColor-muted, #f6f8fa); color: var(--fgColor-muted, #59636e);
+  border-bottom: 1px solid var(--borderColor-default, #d0d7de);
+}
+.scrum-trace td {
+  padding: 6px 8px; vertical-align: top;
+  border-bottom: 1px solid var(--borderColor-muted, #eef0f4);
+}
+.scrum-trace tr:last-child td { border-bottom: none; }
+.scrum-trace-reqs { display: flex; flex-wrap: wrap; gap: 4px; }
+.scrum-trace-reqs .scrum-chip { cursor: default; }
+.scrum-trace-paths { display: flex; flex-direction: column; gap: 2px; }
+.scrum-trace-paths code {
+  font-family: var(--fontStack-monospace, ui-monospace, monospace); font-size: 11px;
+  color: var(--fgColor-default, #1d1f24); word-break: break-all;
+}
+.scrum-trace-holes { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.scrum-chip.scrum-trace-hole {
+  cursor: default;
+  color: var(--fgColor-danger, #d1242f); background: var(--bgColor-danger-muted, #ffebe9);
+  border-color: var(--borderColor-danger-muted, transparent);
+}
+.scrum-trace-issues { margin: 8px 0 0; padding-left: 18px; }
+.scrum-trace-issues li { margin: 2px 0; word-break: break-word; }
+
 /* ---- Shelf rows (Archive / Trash) ---- */
 .scrum-node { margin: 2px 0; }
 .scrum-row {

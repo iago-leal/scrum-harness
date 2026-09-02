@@ -19,6 +19,8 @@ function component(fields: Partial<Component>): Component {
 
 /** A neutral readiness for tree fixtures (comp-46 R1: the field is mandatory; formatTree never reads it). */
 const NO_READINESS = { phase: 'requirements' as const, next: 'design' as const, ok: true, reasons: [] as string[], status: 'in_progress' as const }
+/** An empty matrix for tree fixtures (comp-49 R5: the field is mandatory; formatTree never reads it). */
+const NO_TRACES = { source: null, entries: [], ids: [], untraced: [], unknown: [], nocode: [], unproven: [], files: [], tests: [], issues: [] }
 
 const BODY = 'R1 — done needs validation.'
 const DIGEST = ArtifactContract.digestOf(BODY)
@@ -26,7 +28,7 @@ const DIGEST = ArtifactContract.digestOf(BODY)
 function brief(over: Partial<ReviewBriefData> = {}): ReviewBriefData {
   return {
     component: component({}),
-    requirements: { version: 2, digest: DIGEST, status: 'approved', body: BODY },
+    requirements: { version: 2, digest: DIGEST, status: 'approved', body: BODY, ids: ['R1'] },
     taskCount: 3,
     ...over,
   }
@@ -61,7 +63,7 @@ describe('formatReviewBrief', () => {
     expect(text).not.toMatch(/Previous review/)
     expect(text).not.toMatch(/## Design/)
     // Static blocks stay small (R4 ceiling ~1500 tokens ≈ 6000 chars).
-    expect(formatReviewBrief(brief({ requirements: { version: 1, digest: DIGEST, status: 'approved', body: 'x' } })).length)
+    expect(formatReviewBrief(brief({ requirements: { version: 1, digest: DIGEST, status: 'approved', body: 'x', ids: [] } })).length)
       .toBeLessThan(6000)
   })
 
@@ -96,7 +98,7 @@ describe('formatTree review-stale marker (R5)', () => {
       id: 'rel-1', name: 'R', status: 'active', order: 0, createdAt: '', updatedAt: '',
       features: [{
         id: 'feat-1', releaseId: 'rel-1', title: 'F', status: 'in_progress', order: 0, createdAt: '', updatedAt: '',
-        components: [{ ...comp, tasks: [], readyForDone: ready, readiness: NO_READINESS }],
+        components: [{ ...comp, tasks: [], readyForDone: ready, readiness: NO_READINESS, traces: NO_TRACES }],
       }],
     }],
   })
@@ -125,7 +127,7 @@ describe('formatTree ready-for-done marker (comp-47 R7)', () => {
       id: 'rel-1', name: 'R', status: 'active', order: 0, createdAt: '', updatedAt: '',
       features: [{
         id: 'feat-1', releaseId: 'rel-1', title: 'F', status: 'in_progress', order: 0, createdAt: '', updatedAt: '',
-        components: [{ ...comp, tasks: [], readyForDone: ready, readiness: NO_READINESS }],
+        components: [{ ...comp, tasks: [], readyForDone: ready, readiness: NO_READINESS, traces: NO_TRACES }],
       }],
     }],
   })
@@ -193,6 +195,7 @@ describe('kind prefix (comp-45 R4)', () => {
             ...component({}),
             readyForDone: false,
             readiness: NO_READINESS,
+            traces: NO_TRACES,
             tasks: [
               task({ id: 'task-75', kind: 'test', title: 'Testes de domínio do motor (R8)', status: 'done', sprintId: 'spr-11', estimate: 3 }),
               task({ id: 'task-76', kind: 'code', title: 'spec.ts + service.ts', status: 'done', sprintId: 'spr-11', estimate: 3 }),
@@ -226,5 +229,158 @@ describe('kind prefix (comp-45 R4)', () => {
       tasks: [task({ id: 'task-3', kind: 'code', title: 'gone', status: 'backlog', deletedAt: '2026-01-02T00:00:00.000Z', estimate: 2 })],
     }, 'trash')
     expect(shelf).toMatch(/^task-3 \[code\] gone \[task backlog, of comp-7\] \(2pt\) 2026-01-02T00:00:00\.000Z$/m)
+  })
+})
+
+// ── comp-49: the matrix and the impact report as text (R6), the brief's ids and conventions (R2/R8) ──
+// Written BEFORE the code (TDD).
+import { formatImpact, formatTraceMatrix } from '../src/format.ts'
+import type { ImpactReport } from '../src/service.ts'
+import type { TraceMatrixData } from '../src/traces.ts'
+
+function matrix(over: Partial<TraceMatrixData> = {}): TraceMatrixData {
+  return { ...NO_TRACES, ...over }
+}
+
+describe('formatTraceMatrix (comp-49 R6)', () => {
+  const done = component({ id: 'comp-46', title: 'Context-scrum ciente da fase', status: 'done', phase: 'validation' })
+
+  it('R6: header with source and counts, one line per entry, holes only when there are some', () => {
+    const text = formatTraceMatrix(done, matrix({
+      source: 'design',
+      entries: [
+        { req: ['R1'], files: ['packages/a/src/x.ts', 'packages/a/src/y.ts'], tests: ['packages/a/tests/x.spec.ts'] },
+        { req: ['R2', 'R3'], files: [], tests: [] },
+        { req: ['R5'], files: ['packages/a/src/z.ts'], tests: [] },
+      ],
+      ids: ['R1', 'R2', 'R3', 'R4', 'R5'],
+      untraced: ['R4'], unproven: ['R5'], unknown: [], nocode: ['R2', 'R3'],
+      files: ['packages/a/src/x.ts', 'packages/a/src/y.ts', 'packages/a/src/z.ts'], tests: ['packages/a/tests/x.spec.ts'],
+    }))
+    expect(text).toBe([
+      'comp-46 Context-scrum ciente da fase [done · validation] — matrix from design (3 entries, 5 ids)',
+      '  R1 → packages/a/src/x.ts, packages/a/src/y.ts ⇐ packages/a/tests/x.spec.ts',
+      '  R2, R3 → (no code) ⇐ (no test)',
+      '  R5 → packages/a/src/z.ts ⇐ (no test)',
+      '  holes: without trace R4 · unproven R5',
+    ].join('\n'))
+    // No holes at all: the line is omitted. Unknown ids show in the holes line.
+    const clean = formatTraceMatrix(done, matrix({ source: 'validation', entries: [{ req: ['R1'], files: ['a.ts'], tests: ['a.spec.ts'] }], ids: ['R1'] }))
+    expect(clean).toBe('comp-46 Context-scrum ciente da fase [done · validation] — matrix from validation (1 entries, 1 ids)\n  R1 → a.ts ⇐ a.spec.ts')
+    expect(formatTraceMatrix(done, matrix({ source: 'design', entries: [{ req: ['R9'], files: [], tests: [] }], ids: ['R1'], untraced: ['R1'], unknown: ['R9'], nocode: [] })))
+      .toContain('\n  holes: without trace R1 · unknown R9')
+  })
+
+  it('R6: no matrix, archived marker, and issues one per line', () => {
+    const fresh = component({ id: 'comp-43', title: 'Requisitos no form e nas tools', status: 'proposed', phase: 'requirements' })
+    expect(formatTraceMatrix(fresh, matrix())).toBe('comp-43 Requisitos no form e nas tools [proposed · requirements] — no matrix (source: none)')
+    const archived = component({ id: 'comp-42', title: 'Motor', status: 'done', phase: 'validation', archivedAt: '2026-09-02T00:00:00.000Z' })
+    const text = formatTraceMatrix(archived, matrix({
+      source: 'design', entries: [{ req: ['R1'], files: ['processo'], tests: ['validação do comp'] }], ids: ['R1'],
+      files: ['processo'], tests: ['validação do comp'],
+      issues: ['traces[0].tests[0] "validação do comp" is not a workspace-relative path (whitespace)'],
+    }))
+    expect(text).toBe([
+      'comp-42 Motor [done · validation (archived)] — matrix from design (1 entries, 1 ids)',
+      '  R1 → processo ⇐ validação do comp',
+      '  issues:',
+      '    - traces[0].tests[0] "validação do comp" is not a workspace-relative path (whitespace)',
+    ].join('\n'))
+    // A filled design without a source still explains itself.
+    expect(formatTraceMatrix(fresh, matrix({ issues: ['`design` frontmatter: traces missing (one `- { req, files, tests }` per line)'] })))
+      .toBe('comp-43 Requisitos no form e nas tools [proposed · requirements] — no matrix (source: none)\n  issues:\n    - `design` frontmatter: traces missing (one `- { req, files, tests }` per line)')
+  })
+})
+
+describe('formatImpact (comp-49 R6)', () => {
+  const hit = (over: Partial<ImpactReport['hits'][number]> = {}): ImpactReport['hits'][number] => ({
+    id: 'comp-1', title: 'OAuth flow', status: 'in_progress', phase: 'construction', archived: false,
+    req: ['R1'], via: 'files', matched: ['packages/a/src/x.ts'], files: ['packages/a/src/x.ts'], tests: ['packages/a/tests/x.spec.ts'],
+    ...over,
+  })
+
+  it('R6: a file with hits — the three via forms, (no test)/(no code), the archived marker', () => {
+    const report: ImpactReport = {
+      path: 'packages/a/src/x.ts', form: 'file', traced: true,
+      hits: [
+        hit(),
+        hit({ id: 'comp-2', title: 'Second', via: 'tests', archived: true, status: 'done', phase: 'validation', files: [], tests: ['packages/a/src/x.ts'], matched: ['packages/a/src/x.ts'] }),
+        hit({ id: 'comp-3', title: 'Third', via: 'both', req: ['R1', 'R2'], files: ['packages/a/src/x.ts'], tests: ['packages/a/src/x.ts'] }),
+        hit({ id: 'comp-4', title: 'Fourth', tests: [] }),
+      ],
+    }
+    expect(formatImpact(report)).toBe([
+      'packages/a/src/x.ts — traced by 4 entry(ies) in 4 component(s)',
+      '  comp-1 OAuth flow [in_progress · construction] R1 — proved by packages/a/tests/x.spec.ts',
+      '  comp-2 Second [done · validation (archived)] R1 — this is the proof; code: (no code)',
+      '  comp-3 Third [in_progress · construction] R1, R2 — proved by packages/a/src/x.ts; this is the proof; code: packages/a/src/x.ts',
+      '  comp-4 Fourth [in_progress · construction] R1 — proved by (no test)',
+    ].join('\n'))
+    // Two entries of one component count one component.
+    const twice: ImpactReport = { path: 'packages/a/src/x.ts', form: 'file', traced: true, hits: [hit(), hit({ req: ['R2'] })] }
+    expect(formatImpact(twice)).toMatch(/^packages\/a\/src\/x\.ts — traced by 2 entry\(ies\) in 1 component\(s\)\n/)
+  })
+
+  it('R6: a file without hits is a coverage hole; a missing traced file says so', () => {
+    expect(formatImpact({ path: 'packages/x.ts', form: 'file', traced: false, hits: [] })).toBe('packages/x.ts — no trace in any component (coverage hole)')
+    expect(formatImpact({ path: 'packages/a/src/x.ts', form: 'file', traced: true, hits: [hit()], missing: ['packages/a/src/x.ts'], untracedOnDisk: [] }))
+      .toBe('packages/a/src/x.ts — traced by 1 entry(ies) in 1 component(s)\n  comp-1 OAuth flow [in_progress · construction] R1 — proved by packages/a/tests/x.spec.ts\n  missing on disk: x.ts')
+  })
+
+  it('R6: a directory — counts of traced files, via relative to the query, missing/untraced lines, truncation, the root literal', () => {
+    const report: ImpactReport = {
+      path: 'packages/a/src', form: 'directory', traced: true,
+      hits: [
+        hit({ matched: ['packages/a/src/x.ts', 'packages/a/src/y.ts'], files: ['packages/a/src/x.ts', 'packages/a/src/y.ts'] }),
+        hit({ id: 'comp-2', title: 'Second', req: ['R2'], matched: ['packages/a/src/x.ts'], tests: [] }),
+      ],
+      missing: ['packages/a/src/y.ts'],
+      untracedOnDisk: ['packages/a/src/README.md', 'packages/a/src/new.ts'],
+    }
+    expect(formatImpact(report)).toBe([
+      'packages/a/src/ — 2 traced file(s) in 2 component(s)',
+      '  comp-1 OAuth flow [in_progress · construction] R1 — via x.ts, y.ts — proved by packages/a/tests/x.spec.ts',
+      '  comp-2 Second [in_progress · construction] R2 — via x.ts — proved by (no test)',
+      '  missing on disk: y.ts',
+      '  untraced on disk: README.md, new.ts',
+    ].join('\n'))
+    const truncated: ImpactReport = { ...report, missing: undefined, untracedOnDisk: ['packages/a/src/new.ts'], onDiskTruncated: true }
+    expect(formatImpact(truncated)).toContain('\n  untraced on disk: new.ts\n  disk listing truncated at 500 files — missing/untraced are partial')
+    const root: ImpactReport = { path: '', form: 'directory', traced: true, hits: [hit()], untracedOnDisk: ['README.md'], missing: [] }
+    expect(formatImpact(root)).toBe([
+      '(workspace root) — 1 traced file(s) in 1 component(s)',
+      '  comp-1 OAuth flow [in_progress · construction] R1 — via packages/a/src/x.ts — proved by packages/a/tests/x.spec.ts',
+      '  untraced on disk: README.md',
+    ].join('\n'))
+    expect(formatImpact({ path: 'packages/empty', form: 'directory', traced: false, hits: [], untracedOnDisk: [], missing: [] }))
+      .toBe('packages/empty/ — 0 traced file(s) in 0 component(s)')
+  })
+
+  it('R6: caps — 40 hits then +N more; 60 untraced names then +N', () => {
+    const hits = Array.from({ length: 45 }, (_, i) => hit({ id: `comp-${i + 1}` }))
+    const many: ImpactReport = { path: 'packages/a/src/x.ts', form: 'file', traced: true, hits }
+    const text = formatImpact(many)
+    expect(text.split('\n')).toHaveLength(42)
+    expect(text).toMatch(/\n  comp-40 OAuth flow .*\n  \+5 more$/)
+    const untraced = Array.from({ length: 70 }, (_, i) => `packages/a/src/f${String(i).padStart(2, '0')}.ts`)
+    const dir: ImpactReport = { path: 'packages/a/src', form: 'directory', traced: false, hits: [], missing: [], untracedOnDisk: untraced }
+    const line = formatImpact(dir).split('\n')[1]
+    expect(line).toMatch(/^  untraced on disk: f00\.ts, f01\.ts, .*f59\.ts \+10$/)
+  })
+})
+
+describe('formatReviewBrief ids and traceability conventions (comp-49 R2, R8)', () => {
+  it('R2: the ids line follows the version header; none gets the hint', () => {
+    const text = formatReviewBrief(brief())
+    expect(text).toMatch(/## Requirements version 2 \(digest [0-9a-f]{8}\) — status: approved\n\nRequirement ids found: R1\n/)
+    const none = formatReviewBrief(brief({ requirements: { version: 1, digest: DIGEST, status: 'approved', body: 'prose', ids: [] } }))
+    expect(none).toContain('Requirement ids found: none — the matrix cannot key on this text (write "R1 — …" at line start)')
+  })
+
+  it('R8: the house conventions carry the traceability rule to any workspace', () => {
+    const text = formatReviewBrief(brief())
+    expect(text).toMatch(/- Traceability: the design frontmatter carries the matrix — traces: then one indented entry per line/)
+    expect(text).toMatch(/every requirement id must appear \(files: \[\] for a requirement without code\)/)
+    expect(text).toMatch(/Gates: design → tdd and status done\./)
   })
 })

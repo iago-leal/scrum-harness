@@ -19,3 +19,9 @@ export const CONTRACT_REQ = '---\nversion: 1\nstatus: approved\n---\nR1 — the 
 export function contractReview(digest: string): string {
   return `---\nreviewer: subagent\nreviewed_version: 1\nreviewed_digest: ${digest}\nverdict: approved\nround: 1\nfindings: { high: 0, medium: 0, low: 0 }\n---\nNo blocking finding.`
 }
+
+/**
+ * A design whose frontmatter carries a complete traceability matrix for
+ * CONTRACT_REQ's single R1 (comp-49 R11): the design → tdd gate reads it.
+ */
+export const CONTRACT_DESIGN = '---\ntraces:\n  - { req: [R1], files: [src/a.ts], tests: [tests/a.spec.ts] }\n---\nDesign.'

@@ -322,3 +322,24 @@ describe('phase readiness on the wire (comp-46)', () => {
     expect(check.status).toBe(400)
   })
 })
+
+// ── comp-49 R5: the matrix rides the state tree (no new action) ───────────
+describe('traces on the wire (comp-49 R5)', () => {
+  it('R5: every component carries traces with its source; the action route answers with the same field', async () => {
+    await act({ action: 'createRelease', name: 'v1.0' })
+    await act({ action: 'createFeature', releaseId: 'rel-1', title: 'F' })
+    await act({ action: 'createComponent', featureId: 'feat-1', title: 'C' })
+    const fresh = (await state()).state.tree.releases[0].features[0].components[0]
+    expect(fresh.traces).toEqual({ source: null, entries: [], ids: [], untraced: [], unknown: [], nocode: [], unproven: [], files: [], tests: [], issues: [] })
+    const updated = await act({
+      action: 'updateItem', id: 'comp-1', requirements: CONTRACT_REQ,
+      design: '---\ntraces:\n  - { req: [R1], files: [src/a.ts], tests: [tests/a.spec.ts] }\n---\nD',
+    })
+    expect(updated.status).toBe(200)
+    const traced = updated.json.state.tree.releases[0].features[0].components[0].traces
+    expect(traced).toMatchObject({ source: 'design', ids: ['R1'], files: ['src/a.ts'], tests: ['tests/a.spec.ts'], untraced: [], issues: [] })
+    expect(traced.entries).toEqual([{ req: ['R1'], files: ['src/a.ts'], tests: ['tests/a.spec.ts'] }])
+    // Still no read op on the mutation route.
+    expect((await act({ action: 'trace', path: 'src/a.ts' } as never)).status).toBe(400)
+  })
+})

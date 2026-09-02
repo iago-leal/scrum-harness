@@ -20,6 +20,8 @@ import { boardNameOf } from './boards.ts'
 import { ScrumError } from './error.ts'
 import { ReviewContract, SuiteBudget, ValidationContract } from './contracts.ts'
 import type { ContractResult, ReviewMeta, ValidationResult } from './contracts.ts'
+import { TraceContract, TraceMatrix, matchPath, normalizePath, pathIssue, traceGateFor } from './traces.ts'
+import type { TraceField, TraceGate, TraceMatrixData } from './traces.ts'
 import { TASK_KINDS, splitKindPrefix, taskNumber } from './kind.ts'
 import type { TaskKind } from './kind.ts'
 import {
@@ -63,7 +65,8 @@ function filled(text: string | undefined): boolean {
  */
 export interface ReviewBriefData {
   component: Component
-  requirements: { version: number; digest: string; status: string | undefined; body: string }
+  /** `ids` (comp-49 R2): the requirement ids the traceability matrix will key on. */
+  requirements: { version: number; digest: string; status: string | undefined; body: string; ids: string[] }
   /** The previous review when one exists (typed meta when its frontmatter is valid). */
   previousReview?: { meta: ReviewMeta | null; body: string }
   /** The design artifact, only once the component is past requirements. */
@@ -180,12 +183,52 @@ export interface ScrumTree {
   releases: (Release & {
     features: (Feature & {
       /**
-       * `readyForDone` (comp-47) and `readiness` (comp-46): computed in the
-       * Model on every read, never persisted.
+       * `readyForDone` (comp-47), `readiness` (comp-46) and `traces`
+       * (comp-49): computed in the Model on every read, never persisted.
        */
-      components: (Component & { tasks: Task[]; readyForDone: boolean; readiness: PhaseReadiness })[]
+      components: (Component & { tasks: Task[]; readyForDone: boolean; readiness: PhaseReadiness; traces: TraceMatrixData })[]
     })[]
   })[]
+}
+
+/** One entry of a component's matrix that answered an impact query (comp-49 R5). */
+export interface ImpactHit {
+  id: string
+  title: string
+  status: Component['status']
+  phase: ComponentPhase
+  /** Archived components answer too — they are the history that explains the code. */
+  archived: boolean
+  req: string[]
+  /** Which side of the entry matched. */
+  via: 'files' | 'tests' | 'both'
+  /** The traced paths that answered, distinct and sorted. */
+  matched: string[]
+  files: string[]
+  tests: string[]
+}
+
+/** What the caller knows about the disk (comp-49 R5): the Model never probes it. */
+export interface ImpactOptions {
+  /** Workspace-relative paths that exist under the query (normalized by the Model). */
+  onDisk?: string[]
+  /** True when the listing hit the probe cap: `missing` becomes unknowable and is omitted. */
+  onDiskTruncated?: boolean
+}
+
+/** The answer to "what does this path affect" (comp-49 R5). */
+export interface ImpactReport {
+  /** The normalized query ('' = the workspace root). */
+  path: string
+  /** Derived in the Model: a directory when the root, a match or an on-disk entry differs from the query. */
+  form: 'file' | 'directory'
+  hits: ImpactHit[]
+  traced: boolean
+  /** Traced paths under the query that are neither on disk nor a directory prefix of an on-disk entry. */
+  missing?: string[]
+  /** On-disk paths under the query no component traces (the coverage hole). */
+  untracedOnDisk?: string[]
+  onDiskTruncated?: boolean
 }
 
 /**
@@ -427,6 +470,8 @@ export class ScrumBoard {
                   tasks: tasks.filter(t => t.componentId === component.id).sort(byOrder),
                   readyForDone: component.status !== 'done' && this.doneGate(component).length === 0,
                   readiness: this.readinessOf(component),
+                  // comp-49 R5: the matrix as data, done components included (the GUI shows history too).
+                  traces: TraceMatrix.of(component),
                 })),
             })),
         })),
@@ -699,8 +744,13 @@ export class ScrumBoard {
         const result = new ReviewContract().check(component)
         return result.ok ? [] : result.reasons
       }
-      case 'design':
-        return filled(component.design) ? [] : ['design is empty']
+      case 'design': {
+        // comp-49 R4: an empty design keeps its one exact reason; a filled one
+        // must carry the traceability matrix (the contract is consulted only then).
+        if (!filled(component.design)) return ['design is empty']
+        const result = new TraceContract('design').check(component)
+        return result.ok ? [] : result.reasons
+      }
       case 'tdd': {
         // comp-45 R3: tests before code. (a) alone excludes (b)/(c); without
         // any test task every code task counts as early, so (b) and (c) come
@@ -801,6 +851,7 @@ export class ScrumBoard {
         digest: requirements.digest(component),
         status: meta.status,
         body: requirements.body(component),
+        ids: requirements.ids(component),
       },
       ...filled(component.requirementsReview)
         ? { previousReview: { meta: contract.meta(component).meta, body: contract.body(component) } }
@@ -831,6 +882,11 @@ export class ScrumBoard {
     }
     const contract = this.validationContractFor().check(component)
     if (!contract.ok) reasons.push(...contract.reasons)
+    // comp-49 R4: the matrix closes against the CURRENT requirement ids —
+    // read from the effective source (the validation's as-built when it
+    // carries an array, else the design; with no source the design's reasons speak).
+    const traces = new TraceContract(TraceMatrix.sourceOf(component) ?? 'design').check(component)
+    if (!traces.ok) reasons.push(...traces.reasons)
     return reasons
   }
 
@@ -857,6 +913,116 @@ export class ScrumBoard {
   /** The validation contract bound to THIS board's suite budget (comp-50 R2). */
   private validationContractFor(): ValidationContract {
     return new ValidationContract({ budgetSeconds: this.suiteBudget().seconds })
+  }
+
+  // ── the traceability matrix (v0.18, comp-49) ───────────────────────────────
+
+  /** Every component outside the trash — archived included — by id number. */
+  private tracedComponents(): Component[] {
+    return [...this.domain.table('components').entries()]
+      .map(([, component]) => component)
+      .filter(c => c.deletedAt === undefined)
+      .sort((a, b) => Number(a.id.slice(5)) - Number(b.id.slice(5)))
+  }
+
+  /**
+   * What one path affects (comp-49 R5): every matrix entry — of every
+   * component outside the trash — that names the path or something under
+   * it. Pure over the board; the caller may hand in what exists on disk and
+   * gets the coverage holes back.
+   * @param path - a workspace-relative file or directory ('' / '.' = the root).
+   * @param options - the disk listing under the query, when the caller probed it.
+   * @returns the report.
+   * @throws ScrumError `invalid-input` for an absolute or parent-escaping query.
+   */
+  impact(path: string, options: ImpactOptions = {}): ImpactReport {
+    const q = normalizePath(path)
+    const issue = pathIssue(q)
+    if (issue === 'absolute' || issue === '.. segment') {
+      throw new ScrumError('invalid-input', `impact path must be workspace-relative (got '${path}': ${issue})`)
+    }
+    const codePoint = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0)
+    const hits: ImpactHit[] = []
+    for (const component of this.tracedComponents()) {
+      for (const entry of TraceMatrix.of(component).entries) {
+        const files = entry.files.filter(p => matchPath(p, q))
+        const tests = entry.tests.filter(p => matchPath(p, q))
+        if (files.length + tests.length === 0) continue
+        hits.push({
+          id: component.id,
+          title: component.title,
+          status: component.status,
+          phase: component.phase,
+          archived: component.archivedAt !== undefined,
+          req: [...entry.req],
+          via: files.length > 0 && tests.length > 0 ? 'both' : files.length > 0 ? 'files' : 'tests',
+          matched: [...new Set([...files, ...tests])].sort(codePoint),
+          files: [...entry.files],
+          tests: [...entry.tests],
+        })
+      }
+    }
+    const matched = [...new Set(hits.flatMap(h => h.matched))]
+    const report: ImpactReport = { path: q, form: 'file', hits, traced: hits.length > 0 }
+    let disk: string[] | undefined
+    if (options.onDisk !== undefined) {
+      disk = [...new Set(options.onDisk.map(normalizePath))]
+      const traced = new Set(this.tracedFiles())
+      report.untracedOnDisk = disk.filter(p => !traced.has(p)).sort(codePoint)
+      if (options.onDiskTruncated === true) report.onDiskTruncated = true
+      else {
+        const present = new Set(disk)
+        report.missing = matched
+          .filter(m => !present.has(m) && !disk!.some(d => d.startsWith(`${m}/`)))
+          .sort(codePoint)
+      }
+    }
+    if (q === '' || matched.some(m => m !== q) || (disk ?? []).some(d => d !== q)) report.form = 'directory'
+    return report
+  }
+
+  /** Every traced file or test over the components outside the trash, distinct, code-point order (comp-49 R5). */
+  tracedFiles(): string[] {
+    const all = new Set<string>()
+    for (const component of this.tracedComponents()) {
+      const matrix = TraceMatrix.of(component)
+      for (const p of matrix.files) all.add(p)
+      for (const p of matrix.tests) all.add(p)
+    }
+    return [...all].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0))
+  }
+
+  /**
+   * The matrix of one component as data (comp-49 R5) — archived ones
+   * included (read-only history); trashed and unknown ids refuse.
+   * @param id - component id.
+   * @returns the deep-frozen matrix.
+   */
+  traceMatrix(id: string): TraceMatrixData {
+    return TraceMatrix.of(this.mustGetNotTrashed('components', id))
+  }
+
+  /**
+   * The trace contract's verdict on one field of a component (comp-49 R8),
+   * as the gates will see it — the effective source by default.
+   * @param id - component id.
+   * @param field - `design` or `validation`; defaults to the effective source (the design when there is none).
+   * @returns ok, or every violated condition.
+   */
+  traceContract(id: string, field?: TraceField): ContractResult {
+    const component = this.mustGetNotTrashed('components', id)
+    return new TraceContract(field ?? TraceMatrix.sourceOf(component) ?? 'design').check(component)
+  }
+
+  /**
+   * Which gate will read the matrix of one field (comp-49 R8): what the
+   * tool's early note names. See `traceGateFor`.
+   * @param id - component id.
+   * @param field - the field just written.
+   * @returns the gate, or null when the field is not the effective source.
+   */
+  traceGate(id: string, field: TraceField): TraceGate | null {
+    return traceGateFor(this.mustGetNotTrashed('components', id), field)
   }
 
   /** The component's tasks that count for phase gates: everything not in the trash. */
@@ -1400,6 +1566,20 @@ export class ScrumBoard {
     }
     if (shelf.archivedAt !== undefined) {
       throw new ScrumError('archived', `'${id}' is archived; unarchive it first`)
+    }
+    return record
+  }
+
+  /**
+   * @returns the record, required not to be in the trash — archived ones
+   * pass (comp-49: read-only history); throws `not-found` or `in-trash`.
+   */
+  private mustGetNotTrashed<N extends keyof ScrumDomainSpec['tables'] & string>(
+    table: N, id: string,
+  ): TableValueOf<ScrumDomainSpec, N> {
+    const record = this.mustGet(table, id)
+    if ((record as { deletedAt?: string }).deletedAt !== undefined) {
+      throw new ScrumError('in-trash', `'${id}' is in the trash; restore it first`)
     }
     return record
   }

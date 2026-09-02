@@ -7,7 +7,9 @@
 import { DEFAULT_SUITE_BUDGET_SECONDS, ReviewContract } from './contracts.ts'
 import type { SuiteBudget } from './contracts.ts'
 import type { Ceremony, Component, Sprint, Task } from './spec.ts'
-import type { ReviewBriefData, ScrumTree, ShelfLists, SprintStatus } from './service.ts'
+import type { ImpactHit, ImpactReport, ReviewBriefData, ScrumTree, ShelfLists, SprintStatus } from './service.ts'
+import { TRACE_PROBE_CAP } from './traces.ts'
+import type { TraceMatrixData } from './traces.ts'
 
 /** Release-name lookup used to render sprint→release links. */
 export type ReleaseNames = ReadonlyMap<string, string>
@@ -52,6 +54,10 @@ export function formatReviewBrief(data: ReviewBriefData): string {
     `${component.description === undefined ? '' : `${component.description}\n`}Phase: ${component.phase} · status: ${component.status}`,
   )
   blocks.push(`## Requirements version ${requirements.version} (digest ${requirements.digest}) — status: ${requirements.status ?? 'missing'}`)
+  // comp-49 R2: what the traceability matrix will key on.
+  blocks.push(requirements.ids.length === 0
+    ? 'Requirement ids found: none — the matrix cannot key on this text (write "R1 — …" at line start)'
+    : `Requirement ids found: ${requirements.ids.join(', ')}`)
   blocks.push(`## Requirements\n\n${requirements.body}`)
   if (previousReview !== undefined) {
     const label = previousReview.meta === null
@@ -74,6 +80,9 @@ export function formatReviewBrief(data: ReviewBriefData): string {
     '- The spiral: requirements → design → tdd → construction → validation; forward steps go through gates evaluated in the',
     '  domain (inside the table mutator); every refusal names the missing condition; retreats are free and logged.',
     `- Tests before code (TDD); validation records the suite duration against the board budget (currently ${data.suiteBudgetSeconds ?? DEFAULT_SUITE_BUDGET_SECONDS}s; worst of ≥ 3 runs when \`suite.runs\` is given).`,
+    '- Traceability: the design frontmatter carries the matrix — traces: then one indented entry per line "- { req: [R1], files: [<workspace-relative paths>], tests: [...] }" (all three keys);',
+    '  every requirement id must appear (files: [] for a requirement without code); the validation frontmatter may carry the as-built traces (an array), which then close the matrix.',
+    '  Gates: design → tdd and status done.',
   ].join('\n'))
   blocks.push([
     '## Guiding questions (do not stop at them)',
@@ -246,6 +255,104 @@ export function formatSuiteBudget(budget: SuiteBudget, mode: 'read' | 'header'):
     return `Suite budget: ${budget.seconds}s (board — above default ${DEFAULT_SUITE_BUDGET_SECONDS}s: ${budget.reason})`
   }
   return `Suite budget: ${budget.seconds}s (board)`
+}
+
+// ── comp-49 R6: the matrix and the impact report as text ──────────────────
+
+/** The most hits `formatImpact` prints before `+N more`. */
+const IMPACT_HITS_CAP = 40
+/** The most untraced names `formatImpact` prints before `+N`. */
+const IMPACT_UNTRACED_CAP = 60
+
+/** `[status · phase]`, with the archived marker inside the brackets. */
+function stateTag(item: { status: string; phase: string }, archived: boolean): string {
+  return `[${item.status} · ${item.phase}${archived ? ' (archived)' : ''}]`
+}
+
+/** A comma list, or the given placeholder when empty. */
+function listOr(paths: string[], placeholder: string): string {
+  return paths.length === 0 ? placeholder : paths.join(', ')
+}
+
+/**
+ * Render one component's matrix (comp-49 R6): header with the source and
+ * counts, one line per entry, the holes line only when there is a hole,
+ * and the issues one per line.
+ * @param component - id, title, status, phase and the archive stamp.
+ * @param matrix - what `ScrumBoard.traceMatrix` returned.
+ * @returns the multi-line text.
+ */
+export function formatTraceMatrix(
+  component: Pick<Component, 'id' | 'title' | 'status' | 'phase' | 'archivedAt'>,
+  matrix: TraceMatrixData,
+): string {
+  const tag = stateTag(component, component.archivedAt !== undefined)
+  const source = matrix.source === null
+    ? 'no matrix (source: none)'
+    : `matrix from ${matrix.source} (${matrix.entries.length} entries, ${matrix.ids.length} ids)`
+  const lines = [`${component.id} ${component.title} ${tag} — ${source}`]
+  for (const entry of matrix.entries) {
+    lines.push(`  ${entry.req.join(', ')} → ${listOr(entry.files, '(no code)')} ⇐ ${listOr(entry.tests, '(no test)')}`)
+  }
+  const holes = [
+    matrix.untraced.length > 0 ? `without trace ${matrix.untraced.join(', ')}` : null,
+    matrix.unproven.length > 0 ? `unproven ${matrix.unproven.join(', ')}` : null,
+    matrix.unknown.length > 0 ? `unknown ${matrix.unknown.join(', ')}` : null,
+  ].filter((part): part is string => part !== null)
+  if (holes.length > 0) lines.push(`  holes: ${holes.join(' · ')}`)
+  if (matrix.issues.length > 0) {
+    lines.push('  issues:')
+    for (const issue of matrix.issues) lines.push(`    - ${issue}`)
+  }
+  return lines.join('\n')
+}
+
+/** A traced path relative to the query (the whole path at the root; the basename when equal). */
+function relativeTo(path: string, query: string): string {
+  if (query === '') return path
+  if (path === query) return path.slice(path.lastIndexOf('/') + 1)
+  return path.slice(query.length + 1)
+}
+
+/** One hit line: id, title, state tag, ids, the via list on directory queries, and the proof sentence(s). */
+function hitLine(hit: ImpactHit, report: ImpactReport): string {
+  const parts: string[] = []
+  if (hit.via !== 'tests') parts.push(`proved by ${listOr(hit.tests, '(no test)')}`)
+  if (hit.via !== 'files') parts.push(`this is the proof; code: ${listOr(hit.files, '(no code)')}`)
+  const via = report.form === 'directory' ? `via ${hit.matched.map(m => relativeTo(m, report.path)).join(', ')} — ` : ''
+  return `  ${hit.id} ${hit.title} ${stateTag(hit, hit.archived)} ${hit.req.join(', ')} — ${via}${parts.join('; ')}`
+}
+
+/**
+ * Render an impact report (comp-49 R6): a file with hits, a coverage hole,
+ * or a directory with the counts of traced files — then the missing /
+ * untraced lines relative to the query, or the truncation note.
+ * @param report - what `ScrumBoard.impact` returned.
+ * @returns the multi-line text.
+ */
+export function formatImpact(report: ImpactReport): string {
+  const components = new Set(report.hits.map(h => h.id)).size
+  const lines: string[] = []
+  if (report.form === 'file') {
+    if (!report.traced) return `${report.path} — no trace in any component (coverage hole)`
+    lines.push(`${report.path} — traced by ${report.hits.length} entry(ies) in ${components} component(s)`)
+  } else {
+    const files = new Set(report.hits.flatMap(h => h.matched)).size
+    lines.push(`${report.path === '' ? '(workspace root)' : `${report.path}/`} — ${files} traced file(s) in ${components} component(s)`)
+  }
+  for (const hit of report.hits.slice(0, IMPACT_HITS_CAP)) lines.push(hitLine(hit, report))
+  if (report.hits.length > IMPACT_HITS_CAP) lines.push(`  +${report.hits.length - IMPACT_HITS_CAP} more`)
+  if (report.missing !== undefined && report.missing.length > 0) {
+    lines.push(`  missing on disk: ${report.missing.map(m => relativeTo(m, report.path)).join(', ')}`)
+  }
+  if (report.untracedOnDisk !== undefined && report.untracedOnDisk.length > 0) {
+    const names = report.untracedOnDisk.map(m => relativeTo(m, report.path))
+    const shown = names.slice(0, IMPACT_UNTRACED_CAP).join(', ')
+    const rest = names.length > IMPACT_UNTRACED_CAP ? ` +${names.length - IMPACT_UNTRACED_CAP}` : ''
+    lines.push(`  untraced on disk: ${shown}${rest}`)
+  }
+  if (report.onDiskTruncated === true) lines.push(`  disk listing truncated at ${TRACE_PROBE_CAP} files — missing/untraced are partial`)
+  return lines.join('\n')
 }
 
 /**

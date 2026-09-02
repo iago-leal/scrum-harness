@@ -7,11 +7,12 @@
 import { createHash } from 'node:crypto'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
 import Storage from '@deepseek-ai/dsh-storage'
 import * as StorageDomain from '@deepseek-ai/dsh-storage-domain'
 import * as StorageMemory from '@scrum-harness/test-support/src/index.ts'
+import { CONTRACT_DESIGN } from '@scrum-harness/test-support/src/fixtures.ts'
 import SystemPrompt from '@deepseek-ai/dsh-system-prompt'
 import ToolRuntime from '@deepseek-ai/dsh-tools'
 import type { CallId } from '@deepseek-ai/dsh-tools'
@@ -85,7 +86,7 @@ describe('tool-scrum', () => {
       'scrum_sprint_assign', 'scrum_sprint_start', 'scrum_sprint_end', 'scrum_sprint_status',
       'scrum_task_move', 'scrum_ceremony_record', 'scrum_ceremony_list',
       'scrum_trash_list', 'scrum_item_restore', 'scrum_item_purge', 'scrum_trash_empty',
-      'scrum_archive_list', 'scrum_item_archive', 'scrum_item_unarchive', 'scrum_archive_completed',
+      'scrum_archive_list', 'scrum_item_archive', 'scrum_item_unarchive', 'scrum_archive_completed', 'scrum_trace',
     ]) {
       expect(names).toContain(expected)
     }
@@ -433,7 +434,7 @@ describe('task kind tools (comp-45)', () => {
     await seed()
     await run('scrum_item_update', { id: 'comp-1', requirements: CONTRACT_REQ, requirementsReview: CONTRACT_REVIEW })
     await run('scrum_component_phase', { id: 'comp-1', action: 'advance' })
-    await run('scrum_item_update', { id: 'comp-1', design: 'D' })
+    await run('scrum_item_update', { id: 'comp-1', design: CONTRACT_DESIGN })
     await run('scrum_component_phase', { id: 'comp-1', action: 'advance' })
     await run('scrum_task_create', { componentId: 'comp-1', title: '[code] too early' })
     const refused = await run('scrum_component_phase', { id: 'comp-1', action: 'advance' })
@@ -475,7 +476,7 @@ describe('phase check (comp-46 R4)', () => {
 
     // Validation: the last step is status done, not an advance.
     await run('scrum_component_phase', { id: 'comp-1', action: 'advance' })
-    await run('scrum_item_update', { id: 'comp-1', design: 'D' })
+    await run('scrum_item_update', { id: 'comp-1', design: CONTRACT_DESIGN })
     await run('scrum_component_phase', { id: 'comp-1', action: 'advance' })
     await run('scrum_task_create', { componentId: 'comp-1', title: 't', kind: 'test' })
     await run('scrum_component_phase', { id: 'comp-1', action: 'advance' })
@@ -504,5 +505,203 @@ describe('phase check (comp-46 R4)', () => {
     const shelved = await run('scrum_component_phase', { id: 'comp-1', action: 'check' })
     expect(shelved.isError).toBe(true)
     expect(shelved.text).toMatch(/'comp-1' is in the trash; restore it first/)
+  })
+})
+
+// ── comp-49: the traceability matrix through the tools (R6, R8) — written before the code ──
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { listWorkspaceFiles, resolveWorkspacePath } from '../src/probe.ts'
+
+/** A design whose matrix traces src/a.ts (present) and src/gone.ts (absent) for R1. */
+const TRACED_DESIGN = '---\ntraces:\n  - { req: [R1], files: [src/a.ts, src/gone.ts], tests: [tests/a.spec.ts] }\n---\nDesign.'
+
+describe('scrum_trace (comp-49 R6)', () => {
+  /** A REAL workspace on disk: the probe walks it; the board is keyed by its path. */
+  let ws: string
+  beforeEach(() => {
+    ws = mkdtempSync(join(tmpdir(), 'scrum-trace-'))
+    writeFileSync(join(ws, '.gitignore'), '# build output\n\ndist/\n/lib\n*.log\n!keep\n')
+    for (const dir of ['src', 'tests', 'dist', 'lib', 'node_modules', '.hidden', 'src/nested']) mkdirSync(join(ws, dir), { recursive: true })
+    for (const file of ['src/a.ts', 'src/untraced.ts', 'src/nested/deep.ts', 'tests/a.spec.ts', 'dist/out.js', 'lib/l.js', 'node_modules/x.js', '.hidden/y.ts', 'keep', 'debug.log', 'README.md']) {
+      writeFileSync(join(ws, file), '')
+    }
+  })
+  afterEach(() => { rmSync(ws, { recursive: true, force: true }) })
+
+  async function seed(): Promise<void> {
+    await run('scrum_release_create', { name: 'v1.0' }, { cwd: ws })
+    await run('scrum_feature_create', { releaseId: 'rel-1', title: 'F' }, { cwd: ws })
+    await run('scrum_component_create', { featureId: 'feat-1', title: 'OAuth' }, { cwd: ws })
+    await run('scrum_item_update', { id: 'comp-1', requirements: CONTRACT_REQ, design: TRACED_DESIGN }, { cwd: ws })
+  }
+
+  it('R6: is registered as a read tool whose description names both forms and the coverage hole', () => {
+    const schema = ctx.tools.schemas().find(s => s.name === 'scrum_trace')!
+    expect(schema).toBeDefined()
+    expect(schema.description).toMatch(/path/)
+    expect(schema.description).toMatch(/\bid\b/)
+    expect(schema.description).toMatch(/coverage hole/)
+    const props = (schema.parameters as { properties: Record<string, unknown>; required?: string[] })
+    expect(Object.keys(props.properties).sort()).toEqual(['id', 'path'])
+  })
+
+  it('R6: by id — the matrix with its holes; a fresh component has no matrix', async () => {
+    await seed()
+    const text = (await run('scrum_trace', { id: 'comp-1' }, { cwd: ws })).text
+    expect(text).toBe([
+      'comp-1 OAuth [proposed · requirements] — matrix from design (1 entries, 1 ids)',
+      '  R1 → src/a.ts, src/gone.ts ⇐ tests/a.spec.ts',
+    ].join('\n'))
+    await run('scrum_component_create', { featureId: 'feat-1', title: 'Fresh' }, { cwd: ws })
+    expect((await run('scrum_trace', { id: 'comp-2' }, { cwd: ws })).text).toBe('comp-2 Fresh [proposed · requirements] — no matrix (source: none)')
+    const trashed = await run('scrum_trace', { id: 'comp-9' }, { cwd: ws })
+    expect(trashed.isError).toBe(true)
+  })
+
+  it('R6: by path — relative, absolute inside the workspace (lexical), absolute outside, none/both, and without a cwd', async () => {
+    await seed()
+    const relative = await run('scrum_trace', { path: 'src/a.ts' }, { cwd: ws })
+    expect(relative.isError).toBe(false)
+    expect(relative.text).toBe('src/a.ts — traced by 1 entry(ies) in 1 component(s)\n  comp-1 OAuth [proposed · requirements] R1 — proved by tests/a.spec.ts')
+    expect((await run('scrum_trace', { path: join(ws, 'src', 'a.ts') }, { cwd: ws })).text).toBe(relative.text)
+    expect((await run('scrum_trace', { path: './src//a.ts' }, { cwd: ws })).text).toBe(relative.text)
+    // A traced file gone from disk.
+    expect((await run('scrum_trace', { path: 'src/gone.ts' }, { cwd: ws })).text)
+      .toBe('src/gone.ts — traced by 1 entry(ies) in 1 component(s)\n  comp-1 OAuth [proposed · requirements] R1 — proved by tests/a.spec.ts\n  missing on disk: gone.ts')
+    // A real file nobody traces.
+    expect((await run('scrum_trace', { path: 'README.md' }, { cwd: ws })).text).toBe('README.md — no trace in any component (coverage hole)')
+
+    const outside = await run('scrum_trace', { path: join(tmpdir(), 'elsewhere', 'x.ts') }, { cwd: ws })
+    expect(outside.isError).toBe(true)
+    expect(outside.text).toBe(`Error: path is outside the workspace (${ws})`)
+    const escaping = await run('scrum_trace', { path: '../x.ts' }, { cwd: ws })
+    expect(escaping.isError).toBe(true)
+    const none = await run('scrum_trace', {}, { cwd: ws })
+    expect(none.isError).toBe(true)
+    expect(none.text).toBe('Error: scrum_trace takes exactly one of path | id')
+    const both = await run('scrum_trace', { path: 'src/a.ts', id: 'comp-1' }, { cwd: ws })
+    expect(both.isError).toBe(true)
+    expect(both.text).toBe('Error: scrum_trace takes exactly one of path | id')
+
+    // Global board (no cwd): a relative path answers without the disk probe; an absolute one cannot.
+    const global = await run('scrum_trace', { path: 'src/a.ts' }, { cwd: null })
+    expect(global.isError).toBe(false)
+    expect(global.text).toBe('src/a.ts — no trace in any component (coverage hole)')
+    const globalAbsolute = await run('scrum_trace', { path: '/tmp/x.ts' }, { cwd: null })
+    expect(globalAbsolute.isError).toBe(true)
+    expect(globalAbsolute.text).toBe('Error: an absolute path needs a workspace (this session has no cwd)')
+  })
+
+  it('R6: a directory query lists what is traced, what is missing and what is untraced on disk — .gitignore names, node_modules and dot names skipped', async () => {
+    await seed()
+    const src = (await run('scrum_trace', { path: 'src' }, { cwd: ws })).text
+    expect(src).toBe([
+      'src/ — 2 traced file(s) in 1 component(s)',
+      '  comp-1 OAuth [proposed · requirements] R1 — via a.ts, gone.ts — proved by tests/a.spec.ts',
+      '  missing on disk: gone.ts',
+      'untraced on disk: nested/deep.ts, untraced.ts'.replace(/^/, '  '),
+    ].join('\n'))
+    const root = (await run('scrum_trace', { path: '.' }, { cwd: ws })).text
+    expect(root.split('\n')[0]).toBe('(workspace root) — 3 traced file(s) in 1 component(s)')
+    expect(root).toContain('\n  missing on disk: src/gone.ts')
+    // `*.log` is a glob: dropped by the reduction, so debug.log is listed (untraced), as R10(f) accepts.
+    expect(root).toContain('\n  untraced on disk: README.md, debug.log, keep, src/nested/deep.ts, src/untraced.ts')
+    expect(root).not.toMatch(/dist|lib\/|node_modules|hidden|\.gitignore/)
+  })
+
+  it('R6: listWorkspaceFiles and resolveWorkspacePath — the probe is environment only', () => {
+    const ignore = new Set(['dist', 'lib'])
+    expect(listWorkspaceFiles(ws, 'src', ignore, 500)).toEqual({ files: ['src/a.ts', 'src/nested/deep.ts', 'src/untraced.ts'], truncated: false })
+    expect(listWorkspaceFiles(ws, 'src/a.ts', ignore, 500)).toEqual({ files: ['src/a.ts'], truncated: false })
+    expect(listWorkspaceFiles(ws, 'src/gone.ts', ignore, 500)).toEqual({ files: [], truncated: false })
+    expect(listWorkspaceFiles(ws, 'nowhere', ignore, 500)).toEqual({ files: [], truncated: false })
+    // Without the ignore names, dist/ and lib/ show up; dot names and node_modules never do.
+    expect(listWorkspaceFiles(ws, '', new Set(), 500).files).toEqual([
+      'README.md', 'debug.log', 'dist/out.js', 'keep', 'lib/l.js', 'src/a.ts', 'src/nested/deep.ts', 'src/untraced.ts', 'tests/a.spec.ts',
+    ])
+    // The cap: a small one proves the flag without 500 files.
+    const capped = listWorkspaceFiles(ws, '', ignore, 3)
+    expect(capped.files).toHaveLength(3)
+    expect(capped.truncated).toBe(true)
+
+    expect(resolveWorkspacePath('/w/s', '/w/s/src/a.ts')).toBe('src/a.ts')
+    expect(resolveWorkspacePath('/w/s/', '/w/s')).toBe('')
+    expect(resolveWorkspacePath('/w/s', '/w/s2/a.ts')).toBeNull()
+    expect(resolveWorkspacePath('/w/s', '/w/s/../x.ts')).toBeNull()
+    // Lexical: no realpath on either side (macOS /var → /private/var would otherwise break).
+    expect(resolveWorkspacePath('/var/folders/x', '/var/folders/x/y.ts')).toBe('y.ts')
+  })
+
+  it('R6: the truncation note rides the directory form when the probe hit its cap', async () => {
+    await seed()
+    for (let i = 0; i < 12; i += 1) writeFileSync(join(ws, 'src', `f${i}.ts`), '')
+    // 500 is the real cap; the tool has no smaller switch — so this asserts the untruncated shape stays consistent.
+    const text = (await run('scrum_trace', { path: 'src' }, { cwd: ws })).text
+    expect(text).not.toMatch(/truncated/)
+    expect(text).toMatch(/untraced on disk: f0\.ts, f1\.ts/)
+  })
+})
+
+describe('scrum_item_update trace notes (comp-49 R8)', () => {
+  async function seed(): Promise<void> {
+    await run('scrum_release_create', { name: 'v1.0' })
+    await run('scrum_feature_create', { releaseId: 'rel-1', title: 'F' })
+    await run('scrum_component_create', { featureId: 'feat-1', title: 'C' })
+    await run('scrum_item_update', { id: 'comp-1', requirements: CONTRACT_REQ, requirementsReview: CONTRACT_REVIEW })
+  }
+
+  it('R8: a design patch names the gate that will read it — design → tdd early, status done later, or the as-built', async () => {
+    await seed()
+    const early = await run('scrum_item_update', { id: 'comp-1', design: 'D' })
+    expect(early.text).toBe('Updated comp-1. trace contract (design): `design` frontmatter missing or malformed (must start on line 1 with ---) — will block design → tdd')
+    const ok = await run('scrum_item_update', { id: 'comp-1', design: CONTRACT_DESIGN })
+    expect(ok.text).toBe('Updated comp-1. trace contract (design): ok — will block design → tdd')
+    await run('scrum_component_phase', { id: 'comp-1', action: 'advance' })
+    await run('scrum_component_phase', { id: 'comp-1', action: 'advance' })
+    expect((await run('scrum_item_update', { id: 'comp-1', design: CONTRACT_DESIGN })).text)
+      .toBe('Updated comp-1. trace contract (design): ok — will block status done')
+    const asBuilt = '---\nvalidated_at: 2026-09-02\nsuite: { tests: 1, passed: 1, wall_seconds: 1, budget_seconds: 10 }\ntypecheck: clean\ntraces:\n  - { req: [R1], files: [src/a.ts], tests: [] }\n---\nok'
+    await run('scrum_item_update', { id: 'comp-1', validation: asBuilt })
+    expect((await run('scrum_item_update', { id: 'comp-1', design: CONTRACT_DESIGN })).text)
+      .toBe('Updated comp-1. trace contract (design): ok (validation as-built is effective)')
+  })
+
+  it('R8: a validation patch — with an array the as-built is checked; without one the design stays effective', async () => {
+    await seed()
+    await run('scrum_item_update', { id: 'comp-1', design: CONTRACT_DESIGN })
+    const plain = '---\nvalidated_at: 2026-09-02\nsuite: { tests: 1, passed: 1, wall_seconds: 1, budget_seconds: 10 }\ntypecheck: clean\n---\nok'
+    expect((await run('scrum_item_update', { id: 'comp-1', validation: plain })).text)
+      .toBe('Updated comp-1. validation contract: ok | trace contract: validation carries no traces array — the design matrix stays effective')
+    const empty = plain.replace('typecheck: clean\n', 'typecheck: clean\ntraces: []\n')
+    expect((await run('scrum_item_update', { id: 'comp-1', validation: empty })).text)
+      .toBe('Updated comp-1. validation contract: ok | trace contract (validation): `validation` frontmatter: traces is empty — will block status done')
+    const full = plain.replace('typecheck: clean\n', 'typecheck: clean\ntraces:\n  - { req: [R1], files: [], tests: [] }\n')
+    expect((await run('scrum_item_update', { id: 'comp-1', validation: full })).text)
+      .toBe('Updated comp-1. validation contract: ok | trace contract (validation): ok — will block status done')
+  })
+
+  it('R8: a requirements patch warns when the effective matrix no longer covers the ids (never blocks)', async () => {
+    await seed()
+    await run('scrum_item_update', { id: 'comp-1', design: CONTRACT_DESIGN })
+    const bumped = await run('scrum_item_update', { id: 'comp-1', requirements: '---\nversion: 2\nstatus: approved\n---\nR1 — must work.\nR2 — and more.' })
+    expect(bumped.isError).toBe(false)
+    expect(bumped.text).toMatch(/^Updated comp-1\. review contract: .* \| trace matrix stale: without trace R2$/)
+    // Fully covered: no stale note.
+    const covered = await run('scrum_item_update', { id: 'comp-1', requirements: CONTRACT_REQ })
+    expect(covered.text).not.toMatch(/trace matrix stale/)
+    // No matrix at all: nothing to say.
+    await run('scrum_item_update', { id: 'comp-1', design: '' })
+    expect((await run('scrum_item_update', { id: 'comp-1', requirements: CONTRACT_REQ })).text).not.toMatch(/trace/)
+  })
+
+  it('R8: the descriptions carry the matrix format and the gate', () => {
+    const schemas = ctx.tools.schemas()
+    const update = schemas.find(s => s.name === 'scrum_item_update')!
+    const phase = schemas.find(s => s.name === 'scrum_component_phase')!
+    const props = (update.parameters as { properties: Record<string, { description?: string }> }).properties
+    expect(props['design']?.description).toMatch(/traces:/)
+    expect(props['design']?.description).toMatch(/req.*files.*tests/)
+    expect(props['validation']?.description).toMatch(/traces/)
+    expect(phase.description).toMatch(/design→tdd needs design carrying a complete trace matrix \(frontmatter traces:\)/)
   })
 })

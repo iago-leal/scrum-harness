@@ -8,7 +8,7 @@
  */
 
 import { useEffect, useState } from 'react'
-import type { ScrumState, WireTaskKind } from './api.ts'
+import type { ScrumState, WireTaskKind, WireTraceMatrix } from './api.ts'
 import { COMPONENT_FLOW, FEATURE_FLOW } from './api.ts'
 import { KIND_META, StateDot, TypeIcon } from './meta.tsx'
 
@@ -32,6 +32,8 @@ export interface DetailsNode {
   sprintId?: string
   /** Ancestor path, e.g. "v0.3 › Grade do backlog". */
   crumb?: string
+  /** Components only (comp-49 R7): the Model's traceability matrix, rendered read-only. */
+  traces?: WireTraceMatrix
 }
 
 /**
@@ -63,6 +65,7 @@ export function resolveNode(state: ScrumState, id: string): DetailsNode | null {
             id, kind: 'component', title: component.title, description: component.description,
             status: component.status, statusOptions: [...COMPONENT_FLOW],
             crumb: `${release.name} › ${feature.title}`,
+            traces: component.traces,
           }
         }
         for (const task of component.tasks) {
@@ -215,11 +218,84 @@ export function WorkItemForm(props: {
           </div>
         )}
 
+        {node.kind === 'component' && node.traces !== undefined && <TraceSection traces={node.traces} />}
+
         <div className="scrum-details-foot">
           <button className="scrum-btn" onClick={onClose}>Fechar</button>
           <button className="scrum-btn primary" onClick={save}>Salvar</button>
         </div>
       </div>
+    </div>
+  )
+}
+
+/** A source label for the matrix (comp-49 R7). */
+function traceSourceLabel(source: WireTraceMatrix['source']): string {
+  if (source === 'design') return 'matriz do design'
+  if (source === 'validation') return 'matriz da validação (as-built)'
+  return 'sem matriz (source: none)'
+}
+
+/** Paths one per line, or a muted placeholder. */
+function PathList(props: { paths: string[]; empty: string }) {
+  if (props.paths.length === 0) return <span className="scrum-muted">{props.empty}</span>
+  return (
+    <div className="scrum-trace-paths">
+      {props.paths.map(path => <code key={path}>{path}</code>)}
+    </div>
+  )
+}
+
+/**
+ * The traceability section of a component's work item form (comp-49 R7):
+ * read-only — the source line, one row per entry (Req | Arquivos | Testes),
+ * the holes as warning chips only when there are some, and the issues.
+ */
+export function TraceSection(props: { traces: WireTraceMatrix }) {
+  const { traces } = props
+  const holes: { label: string; ids: string[] }[] = [
+    { label: 'Sem rastro', ids: traces.untraced },
+    { label: 'Sem prova', ids: traces.unproven },
+    { label: 'Desconhecidos', ids: traces.unknown },
+  ].filter(hole => hole.ids.length > 0)
+  return (
+    <div className="scrum-trace-section">
+      <div className="scrum-trace-head">
+        <span>Rastreabilidade</span>
+        <span className="scrum-trace-source">{traceSourceLabel(traces.source)}</span>
+      </div>
+      {traces.entries.length > 0 && (
+        <table className="scrum-trace">
+          <thead>
+            <tr><th>Req</th><th>Arquivos</th><th>Testes</th></tr>
+          </thead>
+          <tbody>
+            {traces.entries.map((entry, index) => (
+              <tr key={index}>
+                <td>
+                  <div className="scrum-trace-reqs">
+                    {entry.req.map(id => <span key={id} className="scrum-chip">{id}</span>)}
+                  </div>
+                </td>
+                <td><PathList paths={entry.files} empty="— (sem código)" /></td>
+                <td><PathList paths={entry.tests} empty="— (sem prova)" /></td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+      {holes.length > 0 && (
+        <div className="scrum-trace-holes">
+          {holes.map(hole => (
+            <span key={hole.label} className="scrum-chip scrum-trace-hole">{hole.label}: {hole.ids.join(', ')}</span>
+          ))}
+        </div>
+      )}
+      {traces.issues.length > 0 && (
+        <ul className="scrum-trace-issues scrum-muted">
+          {traces.issues.map(issue => <li key={issue}>{issue}</li>)}
+        </ul>
+      )}
     </div>
   )
 }

@@ -5,6 +5,8 @@
  * @module @scrum-harness/tool-scrum
  */
 
+import { existsSync, readFileSync } from 'node:fs'
+import { isAbsolute, join } from 'node:path'
 import type { Context } from '@deepseek-ai/cordis'
 import { defineTool } from '@deepseek-ai/dsh-tools'
 import {
@@ -13,18 +15,23 @@ import {
   COMPONENT_PHASES,
   DEFAULT_SUITE_BUDGET_SECONDS,
   formatCeremonies,
+  formatImpact,
   formatReviewBrief,
   formatShelf,
   formatSprints,
   formatSprintStatus,
   formatSuiteBudget,
+  formatTraceMatrix,
   formatTree,
+  gitignoreNames,
   kindPrefix,
   TASK_KINDS,
+  TRACE_PROBE_CAP,
   withBudgetHeader,
 } from '@scrum-harness/domain'
 // Type-only: resolves ctx.scrum for the inject declaration.
 import type {} from '@scrum-harness/domain'
+import { listWorkspaceFiles, resolveWorkspacePath } from './probe.ts'
 
 export const name = 'tool-scrum'
 export const inject = ['tools', 'scrum']
@@ -58,6 +65,8 @@ export function apply(ctx: Context): void {
    */
   const boardOf = (exec: unknown) =>
     ctx.scrum.board((exec as ExecLike).agent?.session.header.cwd)
+  /** The calling session's workspace, when it has one. */
+  const cwdOf = (exec: unknown): string | undefined => (exec as ExecLike).agent?.session.header.cwd
 
   ctx.tools.register(defineTool({
     name: 'scrum_tree',
@@ -191,10 +200,10 @@ export function apply(ctx: Context): void {
       id: { type: 'string', required: true },
       title: { type: 'string', description: 'New title / release name.' },
       description: { type: 'string' },
-      requirements: { type: 'string', description: 'Components only: the requirements artifact — markdown with a YAML frontmatter on line 1 carrying `version: <int ≥ 1>` and, once the human approved them, `status: approved`. Gate requirements → design.' },
+      requirements: { type: 'string', description: 'Components only: the requirements artifact — markdown with a YAML frontmatter on line 1 carrying `version: <int ≥ 1>` and, once the human approved them, `status: approved`; the body declares its ids as "R1 — …" at line start (the traceability matrix keys on them). Gate requirements → design.' },
       requirementsReview: { type: 'string', description: 'Components only: the adversarial review — markdown with frontmatter { reviewer, reviewed_version, reviewed_digest, verdict: approved|needs-revision, round, findings: { high, medium, low } } (get it pre-filled from scrum_component_review_brief). The gate needs verdict approved with findings.high 0, covering the current requirements version and digest.' },
-      design: { type: 'string', description: 'Components only: the design artifact (text + mermaid). Gate design → tdd.' },
-      validation: { type: 'string', description: 'Components only: validation evidence — markdown with frontmatter { validated_at: "<ISO date>", suite: { tests, passed, skipped?, wall_seconds, budget_seconds ≤ the board\'s suite budget (see scrum_suite_budget; default 15), runs?: [a, b, c] }, typecheck: clean } and a body (what was checked and how — command and machine). With `runs` (≥ 3 consecutive runs, written inline) the WORST run counts and wall_seconds must report it. Gate for status done.' },
+      design: { type: 'string', description: 'Components only: the design artifact (text + mermaid) whose frontmatter carries the traceability matrix — `traces:` then one indented entry per line `  - { req: [R1], files: [<workspace-relative paths>], tests: [...] }` (all three keys; every requirement id must appear; files: [] for a requirement without code). Gate design → tdd.' },
+      validation: { type: 'string', description: 'Components only: validation evidence — markdown with frontmatter { validated_at: "<ISO date>", suite: { tests, passed, skipped?, wall_seconds, budget_seconds ≤ the board\'s suite budget (see scrum_suite_budget; default 15), runs?: [a, b, c] }, typecheck: clean, traces?: <the as-built matrix, same shape as the design\'s — when present it replaces the design\'s for the done gate> } and a body (what was checked and how — command and machine). With `runs` (≥ 3 consecutive runs, written inline) the WORST run counts and wall_seconds must report it. Gate for status done.' },
       estimate: { type: 'number', description: 'Tasks only.' },
       kind: { type: 'string', enum: [...TASK_KINDS], description: 'Tasks only: the task kind (test | code | other).' },
       targetDate: { type: 'string', description: 'Releases only (ISO date).' },
@@ -230,6 +239,25 @@ export function apply(ctx: Context): void {
         const contract = board.reviewContract(id)
         notes.push(`review contract: ${contract.ok ? 'ok' : `${contract.reasons.join('; ')} — will block requirements → design`}`)
       }
+      if (id.startsWith('comp-') && args.requirements !== undefined) {
+        // comp-49 R8: the effective matrix may have stopped covering the ids — a warning, never a block.
+        const matrix = board.traceMatrix(id)
+        if (matrix.source !== null && (matrix.untraced.length > 0 || matrix.unknown.length > 0)) {
+          const parts = [
+            matrix.untraced.length > 0 ? `without trace ${matrix.untraced.join(', ')}` : null,
+            matrix.unknown.length > 0 ? `unknown ${matrix.unknown.join(', ')}` : null,
+          ].filter((part): part is string => part !== null)
+          notes.push(`trace matrix stale: ${parts.join(' · ')}`)
+        }
+      }
+      if (id.startsWith('comp-') && args.design !== undefined) {
+        // comp-49 R8: the Model says which gate will read the design's matrix.
+        const contract = board.traceContract(id, 'design')
+        const gate = board.traceGate(id, 'design')
+        const verdict = contract.ok ? 'ok' : contract.reasons.join('; ')
+        const ending = gate === 'design → tdd' ? ' — will block design → tdd' : gate === 'done' ? ' — will block status done' : ' (validation as-built is effective)'
+        notes.push(`trace contract (design): ${verdict}${ending}`)
+      }
       if (id.startsWith('comp-') && args.validation !== undefined) {
         const contract = board.validationContract(id)
         notes.push(`validation contract: ${contract.ok ? 'ok' : `${contract.reasons.join('; ')} — will block status done`}`)
@@ -237,6 +265,13 @@ export function apply(ctx: Context): void {
         if (!contract.ok && contract.overBudget) notes.push('over budget: add a test task (kind test) refactoring the suite before done')
         const budget = board.suiteBudget()
         if (budget.aboveDefault) notes.push(`budget above default (${budget.seconds}s > ${DEFAULT_SUITE_BUDGET_SECONDS}s)`)
+        // comp-49 R8: the as-built matrix, when the validation carries one.
+        if (board.traceGate(id, 'validation') === 'done') {
+          const traces = board.traceContract(id, 'validation')
+          notes.push(`trace contract (validation): ${traces.ok ? 'ok' : traces.reasons.join('; ')} — will block status done`)
+        } else {
+          notes.push('trace contract: validation carries no traces array — the design matrix stays effective')
+        }
       }
       return { text: notes.length === 0 ? `Updated ${id}.` : `Updated ${id}. ${notes.join(' | ')}` }
     },
@@ -268,7 +303,7 @@ export function apply(ctx: Context): void {
       'Move a component along the spiral: requirements → design → tdd → construction → validation. '
       + 'action "advance" takes the next step through its gate (requirements→design needs the review contract: `requirements` with '
       + 'frontmatter version + status approved and a body, `requirementsReview` approved with findings.high 0 covering that version and digest; '
-      + 'design→tdd needs design; tdd→construction needs at least one test task and no code task created before the first test task; '
+      + 'design→tdd needs design carrying a complete trace matrix (frontmatter traces:); tdd→construction needs at least one test task and no code task created before the first test task; '
       + 'construction→validation needs every task done). '
       + 'action "set" with a phase retreats freely (the spiral revisits) or advances one step through the same gate; skipping is refused. '
       + 'action "check" reads the checklist without moving: the phase, the next step and exactly what a move would be refused with '
@@ -308,6 +343,48 @@ export function apply(ctx: Context): void {
     presentCall: args => (args.action === 'check'
       ? { card: 'generic', title: `Check phase of ${args.id}`, kind: 'read' }
       : { card: 'generic', title: `${args.action === 'advance' ? 'Advance' : 'Set'} phase of ${args.id}`, kind: 'edit' }),
+  }))
+
+  ctx.tools.register(defineTool({
+    name: 'scrum_trace',
+    description:
+      'The traceability matrix (comp-49): requirement ↔ files ↔ tests, read from the frontmatter `traces:` of each component\'s design '
+      + '(or of its validation, when that carries the as-built). Exactly one of: `path` — impact query: which requirements of which components '
+      + 'a workspace-relative file or directory affects, which tests prove them, what is traced but missing on disk, and what exists on disk '
+      + 'with no trace at all (coverage hole); `id` — one component\'s matrix with its holes (without trace / unproven / unknown) and issues. '
+      + 'Archived components answer too (history); trashed ones never. An absolute path is resolved against the session workspace.',
+    parameters: {
+      path: { type: 'string', description: 'A file or directory, relative to the workspace root ("." = the root) or absolute inside it.' },
+      id: { type: 'string', description: 'Component id (comp-N): print its matrix instead.' },
+    },
+    output: TEXT_OUTPUT,
+    async execute(args, exec) {
+      const board = await boardOf(exec)
+      if ((args.path === undefined) === (args.id === undefined)) throw new Error('scrum_trace takes exactly one of path | id')
+      if (args.id !== undefined) {
+        // The Model refuses trashed/unknown ids here; the record for the header is live or archived.
+        const matrix = board.traceMatrix(args.id)
+        const component = board.archive().components.find(c => c.id === args.id)
+          ?? board.tree().releases.flatMap(r => r.features).flatMap(f => f.components).find(c => c.id === args.id)!
+        return { text: formatTraceMatrix(component, matrix) }
+      }
+      const cwd = cwdOf(exec)
+      let query = args.path!
+      if (isAbsolute(query)) {
+        if (cwd === undefined) throw new Error('an absolute path needs a workspace (this session has no cwd)')
+        const relative = resolveWorkspacePath(cwd, query)
+        if (relative === null) throw new Error(`path is outside the workspace (${cwd})`)
+        query = relative
+      }
+      if (cwd === undefined) return { text: formatImpact(board.impact(query)) }
+      // The disk probe (environment): the Model owns every rule about what it finds.
+      const report = board.impact(query)
+      const ignorePath = join(cwd, '.gitignore')
+      const ignore = new Set(existsSync(ignorePath) ? gitignoreNames(readFileSync(ignorePath, 'utf8')) : [])
+      const listing = listWorkspaceFiles(cwd, report.path, ignore, TRACE_PROBE_CAP)
+      return { text: formatImpact(board.impact(query, { onDisk: listing.files, onDiskTruncated: listing.truncated })) }
+    },
+    presentCall: args => ({ card: 'generic', title: `Trace ${args.path ?? args.id ?? '?'}`, kind: 'read' }),
   }))
 
   ctx.tools.register(defineTool({

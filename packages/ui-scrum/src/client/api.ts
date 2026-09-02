@@ -48,7 +48,31 @@ export interface WireComponent {
    * Typed only for now — the GUI renders it in the comp-43/44 sprint.
    */
   readiness: WirePhaseReadiness
+  /** Computed by the Model (comp-49): the traceability matrix with its holes; the work item form renders it. */
+  traces: WireTraceMatrix
   tasks: WireTask[]
+}
+
+/** One entry of the traceability matrix (comp-49 R1). */
+export interface WireTraceEntry {
+  req: string[]
+  files: string[]
+  tests: string[]
+}
+
+/** The Model's reading of a component's matrix (comp-49 R3): plain data, holes derived per requirement id. */
+export interface WireTraceMatrix {
+  /** `validation` = the as-built wins; `design` = the plan; null = no matrix. */
+  source: 'design' | 'validation' | null
+  entries: WireTraceEntry[]
+  ids: string[]
+  untraced: string[]
+  unknown: string[]
+  nocode: string[]
+  unproven: string[]
+  files: string[]
+  tests: string[]
+  issues: string[]
 }
 
 /** The spiral phases of a component (v0.12). */

@@ -11,7 +11,7 @@ import { Context } from '@deepseek-ai/cordis'
 import Storage from '@deepseek-ai/dsh-storage'
 import * as StorageDomain from '@deepseek-ai/dsh-storage-domain'
 import * as StorageMemory from '@scrum-harness/test-support/src/index.ts'
-import { CONTRACT_REQ, contractReview } from '@scrum-harness/test-support/src/fixtures.ts'
+import { CONTRACT_DESIGN, CONTRACT_REQ, contractReview } from '@scrum-harness/test-support/src/fixtures.ts'
 import type { Agent, PreStepDecision } from '@deepseek-ai/dsh-agent'
 import { ScrumService } from '@scrum-harness/domain'
 import type { ScrumBoard } from '@scrum-harness/domain'
@@ -183,7 +183,7 @@ async function toTdd(board: ScrumBoard, id: string): Promise<void> {
   await board.updateItem(id, { requirements: CONTRACT_REQ })
   await board.updateItem(id, { requirementsReview: contractReview(board.reviewBrief(id).requirements.digest) })
   await board.advancePhase(id)
-  await board.updateItem(id, { design: 'D' })
+  await board.updateItem(id, { design: CONTRACT_DESIGN })
   await board.advancePhase(id)
 }
 
