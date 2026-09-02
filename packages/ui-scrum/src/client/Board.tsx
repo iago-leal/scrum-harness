@@ -12,9 +12,9 @@
 
 import { useState } from 'react'
 import { COLUMN_LABELS, COLUMNS, COMPONENT_FLOW, FEATURE_FLOW } from './api.ts'
-import type { ScrumState, WireTask, WireTaskKind } from './api.ts'
+import type { ScrumState, WirePhase, WireTask, WireTaskKind } from './api.ts'
 import type { BoardLevel } from './store.ts'
-import { aggOf, KindChip, Rollup, STATUS_META } from './meta.tsx'
+import { aggOf, KindChip, PhaseChip, Rollup, STATUS_META } from './meta.tsx'
 import type { Agg } from './meta.tsx'
 
 /** Callbacks the board drives. */
@@ -53,6 +53,9 @@ interface BoardItem {
   taskKind?: WireTaskKind
   /** Optional descendant-task rollup (parent levels). */
   agg?: Agg
+  /** Components only (comp-43 R7): the spiral phase and the Model's ready-for-done marker. */
+  phase?: WirePhase
+  readyForDone?: boolean
 }
 
 /** Level pivot labels. */
@@ -185,6 +188,7 @@ function Kanban(props: {
                 <div className="scrum-card-meta">
                   <span className="scrum-id">{item.id}</span>
                   <KindChip kind={item.taskKind} />
+                  {item.phase !== undefined && <PhaseChip status={item.status} phase={item.phase} readyForDone={item.readyForDone} />}
                   {item.estimate !== undefined && <span className="scrum-pts">{item.estimate}pt</span>}
                   {item.agg !== undefined && <Rollup agg={item.agg} />}
                   <span style={{ flex: 1 }} />
@@ -259,6 +263,8 @@ export function Board(props: { state: ScrumState; callbacks: BoardCallbacks; ui:
         status: component.status,
         crumb: `${release.name} › ${feature.title}`,
         agg: aggOf(component.tasks),
+        phase: component.phase,
+        readyForDone: component.readyForDone,
       })),
     ))
     return (

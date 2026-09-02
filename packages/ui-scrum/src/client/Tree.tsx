@@ -11,7 +11,7 @@
 import { useState } from 'react'
 import type { ReactNode } from 'react'
 import type { ScrumState, WireComponent, WireFeature, WireRelease, WireSprint, WireTask } from './api.ts'
-import { aggOf, KindChip, Rollup, StateDot, TypeIcon } from './meta.tsx'
+import { aggOf, KindChip, PhaseChip, Rollup, StateDot, TypeIcon } from './meta.tsx'
 import type { KIND_META } from './meta.tsx'
 
 /** Callbacks the tree drives (mutations funnel through the panel). */
@@ -282,6 +282,7 @@ export function Tree(props: { state: ScrumState; callbacks: TreeCallbacks; ui: T
         selected={ui.selected === component.id}
         onOpen={() => { ui.select(component.id) }}
         menu={menuFor(component.id, true)}
+        chip={<PhaseChip status={component.status} phase={component.phase} readyForDone={component.readyForDone} />}
         state={<StateDot status={component.status} />}
         points={<Rollup agg={aggOf(component.tasks)} />}
       />,

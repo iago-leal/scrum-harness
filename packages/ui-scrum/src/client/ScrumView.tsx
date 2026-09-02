@@ -18,16 +18,25 @@ import type { BoardLevel, ScrumView as SectionView } from './store.ts'
 import { THEME_KEY } from './store.ts'
 import { Board } from './Board.tsx'
 import { resolveNode, WorkItemForm } from './Details.tsx'
+import type { RunOutcome } from './settle.ts'
 import { Shelf } from './Shelf.tsx'
 import { Sprints } from './Sprints.tsx'
 import { Tree } from './Tree.tsx'
+
+// The mutation outcome the work item form renders inline (comp-43 R5); it is
+// produced by the pure settler and re-exported here beside the injected face.
+export type { RunOutcome } from './settle.ts'
 
 /** Injected face: same-origin API calls wrapped by apply. */
 export interface ScrumViewInjected {
   /** Fetch fresh state of one workspace's board into the view store. */
   refresh: (workspace: string | null) => void
-  /** Run one mutation on one workspace's board; apply updates the store. */
-  run: (action: Record<string, unknown>, workspace: string | null) => void
+  /**
+   * Run one mutation on one workspace's board; apply updates the store and
+   * the promise answers the outcome (never rejects). Callers that only fire
+   * (board drag, inline creation) keep ignoring it.
+   */
+  run: (action: Record<string, unknown>, workspace: string | null) => Promise<RunOutcome>
 }
 
 /** Minimal structural view of one workspace row (the wire type lives host-side). */
@@ -94,8 +103,8 @@ export function ScrumView(props: ScrumViewProps) {
     return () => { window.clearInterval(timer) }
   }, [refresh, wsPath])
 
-  /** Run one mutation against the board this tab is showing. */
-  const run = (action: Record<string, unknown>) => { props.run(action, wsPath) }
+  /** Run one mutation against the board this tab is showing (the form awaits the outcome). */
+  const run = (action: Record<string, unknown>): Promise<RunOutcome> => props.run(action, wsPath)
   const callbacks = {
     run,
     goToSprints: () => { props.actions.setView('sprints') },

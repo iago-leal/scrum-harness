@@ -6,6 +6,9 @@
  * @module @scrum-harness/ui/client/meta
  */
 
+import type { WirePhase } from './api.ts'
+import { PHASE_TITLES, phaseLabel } from './form.ts'
+
 /** One work-item kind's visual identity. */
 export interface KindMeta {
   /** Monogram glyph inside the colored square. */
@@ -68,6 +71,21 @@ export function TypeIcon(props: { kind: keyof typeof KIND_META }) {
 export function KindChip(props: { kind: 'test' | 'code' | 'other' | undefined }) {
   if (props.kind === undefined || props.kind === 'other') return null
   return <span className={`scrum-kind scrum-kind-${props.kind}`} title="Tipo da tarefa">{props.kind}</span>
+}
+
+/**
+ * Component phase chip (comp-43 R7): the raw phase id — `done` once the
+ * status is done — plus the `ready for done` marker the Model computes.
+ * The vocabulary is the tools' and the snapshot's; no translation.
+ */
+export function PhaseChip(props: { status: string; phase: WirePhase; readyForDone?: boolean }) {
+  const label = phaseLabel(props.status, props.phase)
+  return (
+    <>
+      <span className="scrum-phase" title={PHASE_TITLES[label]}>{label}</span>
+      {props.readyForDone === true && <span className="scrum-phase scrum-phase-ready" title="O gate de done está satisfeito">ready for done</span>}
+    </>
+  )
 }
 
 /** Colored state dot + label (unknown statuses degrade to a grey dot). */

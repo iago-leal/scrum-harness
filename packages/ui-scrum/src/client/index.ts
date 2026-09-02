@@ -10,11 +10,12 @@
 
 import type { ClientContext } from '@deepseek-ai/dsh-client-runtime/client'
 import { act, fetchState } from './api.ts'
-import type { ScrumState } from './api.ts'
 import { createScrumStore } from './store.ts'
 import { PRIMER_CSS } from './primer.ts'
 import { ScrumView } from './ScrumView.tsx'
 import type { ScrumViewInjected } from './ScrumView.tsx'
+import { createSettler } from './settle.ts'
+import type { SettleSink } from './settle.ts'
 import { SCRUM_CSS } from './styles.ts'
 
 export const name = 'ui-scrum'
@@ -44,26 +45,16 @@ export function apply(ctx: ClientContext): void {
 
   /**
    * Wrap the wire calls with busy/error handling against one bound store.
+   * Since v0.19 (comp-43 R5) the ordering lives in the pure settler: results
+   * older than the last settled mutation are dropped, and `run` answers a
+   * RunOutcome the work item form renders inline (it never rejects).
    * @param actions - bound actions of the store instance to settle into.
    */
-  const wireFace = (actions: {
-    setBusy: (busy: boolean) => void
-    setData: (data: ScrumState) => void
-    setError: (error: string | null) => void
-  }): ScrumViewInjected => {
-    /** Apply one settled wire result into the store. */
-    const settle = (work: Promise<ScrumState>): void => {
-      actions.setBusy(true)
-      work
-        .then((state) => { actions.setData(state) })
-        .catch((error: unknown) => {
-          actions.setError(error instanceof Error ? error.message : String(error))
-        })
-        .finally(() => { actions.setBusy(false) })
-    }
+  const wireFace = (actions: SettleSink): ScrumViewInjected => {
+    const settler = createSettler(actions)
     return {
-      refresh: (workspace) => { settle(fetchState(workspace)) },
-      run: (action, workspace) => { settle(act(action, workspace)) },
+      refresh: (workspace) => { void settler.fetch(fetchState(workspace)) },
+      run: (action, workspace) => settler.mutate(act(action, workspace)),
     }
   }
 
