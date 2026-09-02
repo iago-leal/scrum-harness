@@ -158,12 +158,32 @@ export interface RecordCeremonyInput {
   notes: { category: string; text: string }[]
 }
 
+/**
+ * What stands between a component and its next step of the spiral (v0.17,
+ * comp-46): the gate to leave its phase (`reasons` are exactly what
+ * `advancePhase` refuses with), or the done gate in `validation`
+ * (`next: 'done'`). A done component short-circuits: `next: null`, `ok`
+ * vacuously true — while `readyForDone` stays false; the two fields answer
+ * different questions ("is anything blocking the next step" vs "could it
+ * become done right now").
+ */
+export interface PhaseReadiness {
+  phase: ComponentPhase
+  status: Component['status']
+  next: ComponentPhase | 'done' | null
+  ok: boolean
+  reasons: string[]
+}
+
 /** The whole hierarchy as nested data, for tools and the web board. */
 export interface ScrumTree {
   releases: (Release & {
     features: (Feature & {
-      /** `readyForDone` (comp-47): computed in the Model — status not done and the done gate satisfied. */
-      components: (Component & { tasks: Task[]; readyForDone: boolean })[]
+      /**
+       * `readyForDone` (comp-47) and `readiness` (comp-46): computed in the
+       * Model on every read, never persisted.
+       */
+      components: (Component & { tasks: Task[]; readyForDone: boolean; readiness: PhaseReadiness })[]
     })[]
   })[]
 }
@@ -406,6 +426,7 @@ export class ScrumBoard {
                   ...component,
                   tasks: tasks.filter(t => t.componentId === component.id).sort(byOrder),
                   readyForDone: component.status !== 'done' && this.doneGate(component).length === 0,
+                  readiness: this.readinessOf(component),
                 })),
             })),
         })),
@@ -645,9 +666,9 @@ export class ScrumBoard {
         throw new ScrumError('phase-gate', `${id}: cannot skip from ${current.phase} to ${to}`)
       }
       if (toIndex === fromIndex + 1) {
-        const reason = this.phaseGate(current)
-        if (reason !== null) {
-          throw new ScrumError('phase-gate', `${id}: ${reason} — cannot advance from ${current.phase} to ${to}`)
+        const reasons = this.phaseGate(current)
+        if (reasons.length > 0) {
+          throw new ScrumError('phase-gate', `${id}: ${reasons.join('; ')} — cannot advance from ${current.phase} to ${to}`)
         }
       }
       const now = this.now()
@@ -663,27 +684,29 @@ export class ScrumBoard {
   }
 
   /**
-   * The condition to LEAVE a component's current phase, or null when met.
+   * The conditions to LEAVE a component's current phase — every violated
+   * one, named; empty when met (v0.17: a list, so `phaseReadiness` and the
+   * refusal share it; `setPhase` joins with `; `, messages unchanged).
    * Task gates count the component's non-trashed tasks — archived done tasks
    * still count (archiving finished work is the recommended flow).
    * @param component - the component as the mutator sees it.
-   * @returns the missing condition, or null.
+   * @returns the missing conditions, in order.
    */
-  private phaseGate(component: Component): string | null {
+  private phaseGate(component: Component): string[] {
     switch (component.phase) {
       case 'requirements': {
         // v0.13 (comp-48): the review contract — every violated condition, named.
         const result = new ReviewContract().check(component)
-        return result.ok ? null : result.reasons.join('; ')
+        return result.ok ? [] : result.reasons
       }
       case 'design':
-        return filled(component.design) ? null : 'design is empty'
+        return filled(component.design) ? [] : ['design is empty']
       case 'tdd': {
         // comp-45 R3: tests before code. (a) alone excludes (b)/(c); without
         // any test task every code task counts as early, so (b) and (c) come
         // together. Creation order is the id NUMBER (createdAt can tie).
         const tasks = this.tasksOf(component.id)
-        if (tasks.length === 0) return 'no task under the component (decompose first)'
+        if (tasks.length === 0) return ['no task under the component (decompose first)']
         const reasons: string[] = []
         const tests = tasks.filter(t => t.kind === 'test')
         const firstTest = tests.length === 0 ? Infinity : Math.min(...tests.map(t => taskNumber(t.id)))
@@ -694,17 +717,47 @@ export class ScrumBoard {
         if (early.length > 0) {
           reasons.push(`code task(s) created before the first test task (${early.map(t => t.id).join(', ')}) — change their kind or trash them`)
         }
-        return reasons.length === 0 ? null : reasons.join('; ')
+        return reasons
       }
       case 'construction': {
         const tasks = this.tasksOf(component.id)
-        if (tasks.length === 0) return 'no task under the component'
+        if (tasks.length === 0) return ['no task under the component']
         const open = tasks.filter(t => t.status !== 'done')
-        return open.length === 0 ? null : `${open.length} task(s) not done (${open.map(t => t.id).join(', ')})`
+        return open.length === 0 ? [] : [`${open.length} task(s) not done (${open.map(t => t.id).join(', ')})`]
       }
       case 'validation':
-        return null
+        return []
     }
+  }
+
+  /**
+   * What stands between one component and its next step (comp-46 R1): the
+   * phase gate, or the done gate in `validation`; a done component
+   * short-circuits without evaluating any gate. One source of truth for
+   * `phaseReadiness`, the tree annotation, the `check` tool and the context
+   * snapshot.
+   * @param component - the live component.
+   * @returns the readiness.
+   */
+  private readinessOf(component: Component): PhaseReadiness {
+    const base = { phase: component.phase, status: component.status }
+    if (component.status === 'done') return { ...base, next: null, ok: true, reasons: [] }
+    if (component.phase === 'validation') {
+      const reasons = this.doneGate(component)
+      return { ...base, next: 'done', ok: reasons.length === 0, reasons }
+    }
+    const next = COMPONENT_PHASES[COMPONENT_PHASES.indexOf(component.phase) + 1]!
+    const reasons = this.phaseGate(component)
+    return { ...base, next, ok: reasons.length === 0, reasons }
+  }
+
+  /**
+   * The spiral's gates read without moving anything (comp-46 R1).
+   * @param id - component id (shelved ones refuse with the house codes).
+   * @returns phase, next step, and exactly the reasons a move would be refused with.
+   */
+  phaseReadiness(id: string): PhaseReadiness {
+    return this.readinessOf(this.mustGetLive('components', id))
   }
 
   /**

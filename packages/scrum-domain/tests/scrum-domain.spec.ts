@@ -13,6 +13,7 @@ import Storage from '@deepseek-ai/dsh-storage'
 import * as StorageJson from '@deepseek-ai/dsh-storage-json'
 import * as StorageDomain from '@deepseek-ai/dsh-storage-domain'
 import * as StorageMemory from '@scrum-harness/test-support/src/index.ts'
+import { CONTRACT_REQ, contractReview } from '@scrum-harness/test-support/src/fixtures.ts'
 import { ScrumService, ScrumError } from '../src/service.ts'
 import type { ScrumBoard } from '../src/service.ts'
 import { boardNameOf, GLOBAL_BOARD_NAME } from '../src/boards.ts'
@@ -597,13 +598,8 @@ function componentOf(id: string) {
   throw new Error(`component ${id} not in tree`)
 }
 
-/** An approved v1 requirements artifact (the review contract of comp-48 needs the frontmatter). */
-const CONTRACT_REQ = '---\nversion: 1\nstatus: approved\n---\nR1 — the component must work.'
-
-/** An approved round-1 review covering CONTRACT_REQ (digest from the contract). */
-function contractReview(digest: string): string {
-  return `---\nreviewer: subagent\nreviewed_version: 1\nreviewed_digest: ${digest}\nverdict: approved\nround: 1\nfindings: { high: 0, medium: 0, low: 0 }\n---\nNo blocking finding.`
-}
+// CONTRACT_REQ / contractReview(digest) live in @scrum-harness/test-support
+// since comp-46 (shared with the context-scrum spec).
 
 /** Fill the two artifacts the first gate needs (per the review contract) and advance to design. */
 async function toDesign(id: string) {
@@ -1331,5 +1327,89 @@ describe('persistence — task kind migration (comp-45 R1)', () => {
     life = await openJsonStack(lifeRoot)
     reopened = await life.scrum.board()
     expect(reopened.tree().releases[0]!.features[0]!.components[0]!.tasks[0]).toMatchObject({ kind: 'test', title: 'X' })
+  })
+})
+
+// ── comp-46: the gates exposed without mutating (R1) — written before the code ──
+//
+// `phaseReadiness(id)` is the one read of the spiral's gates: the same
+// reasons `advancePhase` refuses with (or `doneGate` in validation), plus
+// `next`, so tools and the context snapshot can say what is missing without
+// trying to move anything. `tree()` annotates it on every component.
+
+/** The refusal message of the next advance, or null when it passes. */
+async function refusalOf(id: string): Promise<string | null> {
+  return scrum.advancePhase(id).then(() => null, (e: unknown) => (e as Error).message)
+}
+
+describe('phase readiness (comp-46 R1)', () => {
+  it('R1: requirements → design carries the review contract reasons — the same text the advance refuses with', async () => {
+    const id = await seedComponent()
+    const readiness = scrum.phaseReadiness(id)
+    expect(readiness).toMatchObject({ phase: 'requirements', next: 'design', ok: false, status: 'proposed' })
+    expect(readiness.reasons.length).toBeGreaterThan(0)
+    expect(readiness.reasons.join()).toMatch(/`requirements` is empty/)
+    const refusal = await refusalOf(id)
+    expect(refusal).toContain(readiness.reasons.join('; '))
+  })
+
+  it('R1: design → tdd, tdd → construction and construction → validation each expose their gate', async () => {
+    const id = await seedComponent()
+    await toDesign(id)
+    expect(scrum.phaseReadiness(id)).toMatchObject({ phase: 'design', next: 'tdd', ok: false, reasons: ['design is empty'], status: 'in_progress' })
+    await scrum.updateItem(id, { design: 'D' })
+    expect(scrum.phaseReadiness(id)).toMatchObject({ phase: 'design', next: 'tdd', ok: true, reasons: [] })
+    await scrum.advancePhase(id)
+
+    const early = await scrum.createTask({ componentId: id, title: '[code] early' })
+    const tdd = scrum.phaseReadiness(id)
+    expect(tdd).toMatchObject({ phase: 'tdd', next: 'construction', ok: false })
+    expect(tdd.reasons).toHaveLength(2)
+    expect(tdd.reasons[0]).toMatch(/no test task/)
+    expect(tdd.reasons[1]).toMatch(new RegExp(`created before the first test task \\(${early.id}\\)`))
+    expect(await refusalOf(id)).toContain(tdd.reasons.join('; '))
+    await scrum.updateItem(early.id, { kind: 'test' })
+    expect(scrum.phaseReadiness(id).ok).toBe(true)
+    await scrum.advancePhase(id)
+
+    const construction = scrum.phaseReadiness(id)
+    expect(construction).toMatchObject({ phase: 'construction', next: 'validation', ok: false, reasons: [`1 task(s) not done (${early.id})`] })
+    expect(await refusalOf(id)).toContain(construction.reasons[0])
+    await finish([early.id])
+    expect(scrum.phaseReadiness(id)).toMatchObject({ phase: 'construction', next: 'validation', ok: true })
+  })
+
+  it('R1: validation → done is the done gate (same list as doneReadiness); done short-circuits with next null', async () => {
+    const id = await seedComponent()
+    await toValidation(id)
+    const blocked = scrum.phaseReadiness(id)
+    expect(blocked).toMatchObject({ phase: 'validation', next: 'done', ok: false })
+    const readiness = scrum.doneReadiness(id)
+    expect(!readiness.ok && readiness.reasons).toEqual(blocked.reasons)
+    expect(blocked.reasons.join()).toMatch(/`validation` is empty/)
+
+    await scrum.updateItem(id, { validation: VALID_VALIDATION })
+    expect(scrum.phaseReadiness(id)).toMatchObject({ phase: 'validation', next: 'done', ok: true, reasons: [] })
+    expect(componentOf(id).readyForDone).toBe(true)
+
+    await scrum.updateItem(id, { status: 'done' })
+    // Done: the record's phase (not a literal), next null, vacuously ok — and readyForDone stays false.
+    expect(scrum.phaseReadiness(id)).toEqual({ phase: 'validation', next: null, ok: true, reasons: [], status: 'done' })
+    expect(componentOf(id)).toMatchObject({ readyForDone: false, readiness: { next: null, ok: true } })
+  })
+
+  it('R1: tree() annotates readiness on every component from the same Model logic; shelved components refuse', async () => {
+    const id = await seedComponent()
+    const other = await scrum.createComponent({ featureId: 'feat-1', title: 'other' })
+    await toDesign(other.id)
+    expect(componentOf(id).readiness).toEqual(scrum.phaseReadiness(id))
+    expect(componentOf(other.id).readiness).toEqual(scrum.phaseReadiness(other.id))
+    expect(componentOf(other.id).readiness).toMatchObject({ phase: 'design', next: 'tdd', reasons: ['design is empty'] })
+
+    await scrum.deleteItem(other.id)
+    expect(() => scrum.phaseReadiness(other.id)).toThrow(/in the trash/)
+    let code = ''
+    try { scrum.phaseReadiness(other.id) } catch (e) { code = (e as { code: string }).code }
+    expect(code).toBe('in-trash')
   })
 })

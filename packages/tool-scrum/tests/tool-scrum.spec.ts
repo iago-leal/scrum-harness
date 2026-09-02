@@ -443,3 +443,66 @@ describe('task kind tools (comp-45)', () => {
     expect((await run('scrum_component_phase', { id: 'comp-1', action: 'advance' })).text).toContain('construction')
   })
 })
+
+// ── comp-46 R4: the checklist read through the tool — written before the code ──
+
+describe('phase check (comp-46 R4)', () => {
+  async function seed(): Promise<void> {
+    await run('scrum_release_create', { name: 'v1.0' })
+    await run('scrum_feature_create', { releaseId: 'rel-1', title: 'F' })
+    await run('scrum_component_create', { featureId: 'feat-1', title: 'C' })
+  }
+
+  it('R4: check reads the checklist without moving, in its four forms', async () => {
+    await seed()
+    const schema = ctx.tools.schemas().find(s => s.name === 'scrum_component_phase')!
+    const action = (schema.parameters as { properties: Record<string, { enum?: string[] }> }).properties['action']!
+    expect(action.enum).toEqual(['advance', 'set', 'check'])
+    expect(schema.description).toMatch(/action "check" reads the checklist without moving/)
+    expect(schema.description).toMatch(/scrum_item_update status done/)
+
+    // Blocked: the same reasons an advance would refuse with; nothing moved.
+    const blocked = await run('scrum_component_phase', { id: 'comp-1', action: 'check' })
+    expect(blocked.isError).toBe(false)
+    expect(blocked.text).toMatch(/^comp-1 \[proposed · requirements\] → design: `requirements` is empty/)
+    expect(blocked.text).toMatch(/; /)
+    expect((await run('scrum_tree', {})).text).toContain('comp-1 C [proposed · requirements]')
+
+    // Ready: advance when ready.
+    await run('scrum_item_update', { id: 'comp-1', requirements: CONTRACT_REQ, requirementsReview: CONTRACT_REVIEW })
+    expect((await run('scrum_component_phase', { id: 'comp-1', action: 'check' })).text)
+      .toBe('comp-1 [proposed · requirements] → design: ok — advance when ready')
+
+    // Validation: the last step is status done, not an advance.
+    await run('scrum_component_phase', { id: 'comp-1', action: 'advance' })
+    await run('scrum_item_update', { id: 'comp-1', design: 'D' })
+    await run('scrum_component_phase', { id: 'comp-1', action: 'advance' })
+    await run('scrum_task_create', { componentId: 'comp-1', title: 't', kind: 'test' })
+    await run('scrum_component_phase', { id: 'comp-1', action: 'advance' })
+    await run('scrum_sprint_plan', { goal: 'g', taskIds: ['task-1'] })
+    await run('scrum_sprint_start', { sprintId: 'spr-1' })
+    await run('scrum_task_move', { taskId: 'task-1', column: 'done' })
+    await run('scrum_component_phase', { id: 'comp-1', action: 'advance' })
+    expect((await run('scrum_component_phase', { id: 'comp-1', action: 'check' })).text)
+      .toMatch(/^comp-1 \[in_progress · validation\] → done: `validation` is empty/)
+    await run('scrum_item_update', { id: 'comp-1', validation: '---\nvalidated_at: 2026-09-02\nsuite: { tests: 1, passed: 1, wall_seconds: 1, budget_seconds: 10 }\ntypecheck: clean\n---\nok' })
+    expect((await run('scrum_component_phase', { id: 'comp-1', action: 'check' })).text)
+      .toBe('comp-1 [in_progress · validation] → done: ok — set status done with scrum_item_update')
+
+    // Done: nothing to do.
+    await run('scrum_item_update', { id: 'comp-1', status: 'done' })
+    expect((await run('scrum_component_phase', { id: 'comp-1', action: 'check' })).text)
+      .toBe('comp-1 [done · validation]: nothing to do')
+  })
+
+  it('R4: check refuses a phase argument like advance does, and a shelved component by name', async () => {
+    await seed()
+    const withPhase = await run('scrum_component_phase', { id: 'comp-1', action: 'check', phase: 'design' })
+    expect(withPhase.isError).toBe(true)
+    expect(withPhase.text).toMatch(/phase/)
+    await run('scrum_item_delete', { id: 'comp-1' })
+    const shelved = await run('scrum_component_phase', { id: 'comp-1', action: 'check' })
+    expect(shelved.isError).toBe(true)
+    expect(shelved.text).toMatch(/'comp-1' is in the trash; restore it first/)
+  })
+})

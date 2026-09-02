@@ -271,14 +271,16 @@ export function apply(ctx: Context): void {
       + 'design→tdd needs design; tdd→construction needs at least one test task and no code task created before the first test task; '
       + 'construction→validation needs every task done). '
       + 'action "set" with a phase retreats freely (the spiral revisits) or advances one step through the same gate; skipping is refused. '
+      + 'action "check" reads the checklist without moving: the phase, the next step and exactly what a move would be refused with '
+      + '(in validation the next step is scrum_item_update status done). '
       + 'A refused gate names the missing condition. Every movement is logged in the component\'s phaseLog.',
     parameters: {
       id: { type: 'string', required: true, description: 'Component id (comp-N).' },
-      action: { type: 'string', required: true, enum: ['advance', 'set'], description: 'advance = next phase through its gate; set = go to `phase`.' },
+      action: { type: 'string', required: true, enum: ['advance', 'set', 'check'], description: 'advance = next phase through its gate; set = go to `phase`; check = read the checklist, move nothing.' },
       phase: {
         type: 'string',
         enum: [...COMPONENT_PHASES],
-        description: 'Target phase — required with action "set", refused with "advance".',
+        description: 'Target phase — required with action "set", refused with "advance" and "check".',
       },
     },
     output: TEXT_OUTPUT,
@@ -287,15 +289,25 @@ export function apply(ctx: Context): void {
       if (args.action === 'set' && args.phase === undefined) {
         throw new Error('action "set" requires a phase')
       }
-      if (args.action === 'advance' && args.phase !== undefined) {
-        throw new Error('action "advance" takes no phase (use "set" to pick one)')
+      if (args.action !== 'set' && args.phase !== undefined) {
+        throw new Error(`action "${args.action}" takes no phase (use "set" to pick one)`)
+      }
+      if (args.action === 'check') {
+        // comp-46 R4: the Model's readiness, rendered in its four forms.
+        const r = board.phaseReadiness(args.id)
+        if (r.next === null) return { text: `${args.id} [${r.status} · ${r.phase}]: nothing to do` }
+        const head = `${args.id} [${r.status} · ${r.phase}] → ${r.next}: `
+        if (!r.ok) return { text: `${head}${r.reasons.join('; ')}` }
+        return { text: `${head}ok — ${r.next === 'done' ? 'set status done with scrum_item_update' : 'advance when ready'}` }
       }
       const component = args.action === 'advance'
         ? await board.advancePhase(args.id)
         : await board.setPhase(args.id, args.phase!)
       return { text: `${component.id} → ${component.phase} [${component.status}]. Phase log: ${component.phaseLog.length} movement(s).` }
     },
-    presentCall: args => ({ card: 'generic', title: `${args.action === 'advance' ? 'Advance' : 'Set'} phase of ${args.id}`, kind: 'edit' }),
+    presentCall: args => (args.action === 'check'
+      ? { card: 'generic', title: `Check phase of ${args.id}`, kind: 'read' }
+      : { card: 'generic', title: `${args.action === 'advance' ? 'Advance' : 'Set'} phase of ${args.id}`, kind: 'edit' }),
   }))
 
   ctx.tools.register(defineTool({

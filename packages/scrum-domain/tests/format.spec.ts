@@ -17,6 +17,9 @@ function component(fields: Partial<Component>): Component {
   }
 }
 
+/** A neutral readiness for tree fixtures (comp-46 R1: the field is mandatory; formatTree never reads it). */
+const NO_READINESS = { phase: 'requirements' as const, next: 'design' as const, ok: true, reasons: [] as string[], status: 'in_progress' as const }
+
 const BODY = 'R1 — done needs validation.'
 const DIGEST = ArtifactContract.digestOf(BODY)
 
@@ -93,7 +96,7 @@ describe('formatTree review-stale marker (R5)', () => {
       id: 'rel-1', name: 'R', status: 'active', order: 0, createdAt: '', updatedAt: '',
       features: [{
         id: 'feat-1', releaseId: 'rel-1', title: 'F', status: 'in_progress', order: 0, createdAt: '', updatedAt: '',
-        components: [{ ...comp, tasks: [], readyForDone: ready }],
+        components: [{ ...comp, tasks: [], readyForDone: ready, readiness: NO_READINESS }],
       }],
     }],
   })
@@ -122,7 +125,7 @@ describe('formatTree ready-for-done marker (comp-47 R7)', () => {
       id: 'rel-1', name: 'R', status: 'active', order: 0, createdAt: '', updatedAt: '',
       features: [{
         id: 'feat-1', releaseId: 'rel-1', title: 'F', status: 'in_progress', order: 0, createdAt: '', updatedAt: '',
-        components: [{ ...comp, tasks: [], readyForDone: ready }],
+        components: [{ ...comp, tasks: [], readyForDone: ready, readiness: NO_READINESS }],
       }],
     }],
   })
@@ -189,6 +192,7 @@ describe('kind prefix (comp-45 R4)', () => {
           components: [{
             ...component({}),
             readyForDone: false,
+            readiness: NO_READINESS,
             tasks: [
               task({ id: 'task-75', kind: 'test', title: 'Testes de domínio do motor (R8)', status: 'done', sprintId: 'spr-11', estimate: 3 }),
               task({ id: 'task-76', kind: 'code', title: 'spec.ts + service.ts', status: 'done', sprintId: 'spr-11', estimate: 3 }),

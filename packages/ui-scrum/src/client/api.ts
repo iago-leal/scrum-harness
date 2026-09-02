@@ -42,11 +42,26 @@ export interface WireComponent {
   phaseLog: { from: WirePhase; to: WirePhase; at: string }[]
   /** Computed by the Model (comp-47): not done and the done gate satisfied. */
   readyForDone: boolean
+  /**
+   * Computed by the Model (comp-46): what blocks the next step of the spiral
+   * (the phase gate, or the done gate in validation); `next: null` once done.
+   * Typed only for now — the GUI renders it in the comp-43/44 sprint.
+   */
+  readiness: WirePhaseReadiness
   tasks: WireTask[]
 }
 
 /** The spiral phases of a component (v0.12). */
 export type WirePhase = 'requirements' | 'design' | 'tdd' | 'construction' | 'validation'
+
+/** The Model's readiness verdict on the wire (comp-46). */
+export interface WirePhaseReadiness {
+  phase: WirePhase
+  status: 'proposed' | 'in_progress' | 'done'
+  next: WirePhase | 'done' | null
+  ok: boolean
+  reasons: string[]
+}
 
 /** One feature with its components. */
 export interface WireFeature {

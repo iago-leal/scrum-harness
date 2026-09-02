@@ -302,3 +302,23 @@ describe('scrum-api', () => {
     expect(trashed).toMatchObject([{ id: 'task-1', kind: 'task', taskKind: 'test', title: 'Gate' }])
   })
 })
+
+// ── comp-46 R1/R4: readiness rides the state — no new action ──
+
+describe('phase readiness on the wire (comp-46)', () => {
+  it('R1: every component of the state tree carries the Model\'s readiness', async () => {
+    await act({ action: 'createRelease', name: 'v1.0' })
+    await act({ action: 'createFeature', releaseId: 'rel-1', title: 'F' })
+    await act({ action: 'createComponent', featureId: 'feat-1', title: 'C' })
+    const component = (await state()).state.tree.releases[0].features[0].components[0]
+    expect(component.readiness).toMatchObject({ phase: 'requirements', status: 'proposed', next: 'design', ok: false })
+    expect(component.readiness.reasons.join()).toMatch(/`requirements` is empty/)
+    expect(component.readyForDone).toBe(false)
+    // The action route answers with the same tree.
+    const updated = await act({ action: 'updateItem', id: 'comp-1', design: 'D' })
+    expect(updated.json.state.tree.releases[0].features[0].components[0].readiness.next).toBe('design')
+    // No `check` op on the mutation route: the schema refuses it.
+    const check = await act({ action: 'componentPhase', id: 'comp-1', op: 'check' })
+    expect(check.status).toBe(400)
+  })
+})
