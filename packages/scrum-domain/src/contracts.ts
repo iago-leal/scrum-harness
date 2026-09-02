@@ -7,8 +7,9 @@
  * the requirements artifact (versioned, human-stamped `status: approved`,
  * non-empty body); {@link ReviewContract} checks the PAIR: a structured,
  * approved review that covers exactly this requirements text (version AND
- * digest). The domain's phase gate delegates to these; a future
- * `ValidationContract` (comp-47) extends the same base.
+ * digest); {@link ValidationContract} (comp-47) checks the evidence behind
+ * `done` against the board's suite budget (comp-50). The domain's gates
+ * delegate to these.
  *
  * Contracts are stateless: instantiate freely, nothing is cached or persisted.
  * @module @scrum-harness/domain/contracts
@@ -17,8 +18,9 @@
 import { createHash } from 'node:crypto'
 import { z } from 'zod'
 import type { ZodType } from 'zod'
+import { ScrumError } from './error.ts'
 import { parseFrontmatter } from './frontmatter.ts'
-import type { Component } from './spec.ts'
+import type { Component, SuiteBudgetRecord } from './spec.ts'
 
 /** The component fields that hold spiral artifacts. */
 export type ArtifactField = 'requirements' | 'requirementsReview' | 'design' | 'validation'
@@ -213,13 +215,81 @@ export class ReviewContract extends ArtifactContract<ReviewMeta> {
 
 // ── comp-47: the validation artifact behind the done gate ─────────────────
 
-/** The board-wide ceiling for the declared suite budget (comp-50 will make it per board). */
+/** The domain default for the board's suite budget ceiling (seconds); a board may set its own (comp-50 R2). */
 export const DEFAULT_SUITE_BUDGET_SECONDS = 15
+
+/**
+ * The board's suite budget as the domain reads it (comp-50 R2): the
+ * effective ceiling, where it comes from, and — when set on the board —
+ * when and why. Immutable; built from the board's global by `fromGlobal`.
+ */
+export class SuiteBudget {
+  /** The ceiling `budget_seconds` is compared against. */
+  readonly seconds: number
+  /** `default` = the domain constant; `board` = a record on the board's global. */
+  readonly source: 'default' | 'board'
+  /** Whether the ceiling stands above {@link DEFAULT_SUITE_BUDGET_SECONDS}. */
+  readonly aboveDefault: boolean
+  /** ISO timestamp of the board record, when set. */
+  readonly setAt?: string
+  /** The reason recorded when the budget stands above the default. */
+  readonly reason?: string
+
+  private constructor(seconds: number, source: 'default' | 'board', setAt?: string, reason?: string) {
+    this.seconds = seconds
+    this.source = source
+    this.aboveDefault = seconds > DEFAULT_SUITE_BUDGET_SECONDS
+    if (setAt !== undefined) this.setAt = setAt
+    if (reason !== undefined) this.reason = reason
+  }
+
+  /**
+   * Read the budget out of a board's global value.
+   * @param global - the board's global (`suiteBudget` optional).
+   * @returns the default budget without a record, else the board's.
+   */
+  static fromGlobal(global: { suiteBudget?: SuiteBudgetRecord }): SuiteBudget {
+    const record = global.suiteBudget
+    if (record === undefined) return new SuiteBudget(DEFAULT_SUITE_BUDGET_SECONDS, 'default')
+    return new SuiteBudget(record.seconds, 'board', record.setAt, record.reason)
+  }
+
+  /**
+   * Validate a budget about to be recorded on a board.
+   * @param seconds - the new ceiling; must be a finite number > 0.
+   * @param reason - required (non-blank) whenever `seconds` stands above the
+   *   default — also when re-setting the same value; ignored, never stored,
+   *   at or below the default.
+   * @returns the record to persist, stamped now.
+   * @throws ScrumError `validation` naming the rule.
+   */
+  static validate(seconds: number, reason?: string): SuiteBudgetRecord {
+    if (typeof seconds !== 'number' || !Number.isFinite(seconds) || seconds <= 0) {
+      throw new ScrumError('validation', `suite budget must be a number > 0 (got ${String(seconds)})`)
+    }
+    const record: SuiteBudgetRecord = { seconds, setAt: new Date().toISOString() }
+    if (seconds > DEFAULT_SUITE_BUDGET_SECONDS) {
+      const why = reason?.trim() ?? ''
+      if (why.length === 0) {
+        throw new ScrumError('validation', `raising the suite budget above ${DEFAULT_SUITE_BUDGET_SECONDS}s requires a reason`)
+      }
+      record.reason = why
+    }
+    return record
+  }
+}
 
 /** ISO-8601 date or date-time (the shapes `validated_at` may take). */
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}(T\d{2}:\d{2}(:\d{2}(\.\d+)?)?(Z|[+-]\d{2}:\d{2})?)?$/
 
-/** Frontmatter of the validation artifact (R1). */
+/** The minimum number of consecutive runs a `suite.runs` list must carry (comp-50 R1). */
+export const MIN_SUITE_RUNS = 3
+
+/**
+ * Frontmatter of the validation artifact (R1). `suite.runs` (comp-50) is
+ * the optional list of consecutive wall times; its length is a cross rule
+ * of `check`, not a schema constraint, so the other reasons keep speaking.
+ */
 export const validationMetaSchema = z.object({
   validated_at: z.string().refine(v => ISO_DATE.test(v) && Number.isFinite(Date.parse(v)), 'must be a quoted ISO-8601 date'),
   suite: z.object({
@@ -228,15 +298,27 @@ export const validationMetaSchema = z.object({
     skipped: z.number().int().min(0).default(0),
     wall_seconds: z.number().min(0),
     budget_seconds: z.number().gt(0),
+    runs: z.array(z.number().min(0)).optional(),
   }),
   typecheck: z.string(),
 })
 export type ValidationMeta = z.infer<typeof validationMetaSchema>
 
 /**
+ * Outcome of the validation contract: the shared shape plus, when refused,
+ * whether the suite's effective wall time exceeds a budget (comp-50 R4) —
+ * the signal behind the "add a test-refactor task" advice. A declared
+ * `budget_seconds` above the board's ceiling alone is a declaration error,
+ * not a slow suite, and does not raise it.
+ */
+export type ValidationResult = { ok: true } | { ok: false; reasons: string[]; overBudget: boolean }
+
+/**
  * The validation artifact: the evidence a component's `done` rests on —
  * a green suite (skipped tolerated, counted), a clean typecheck, and a wall
  * time inside a declared budget that cannot exceed the board's ceiling.
+ * With `suite.runs` (≥ {@link MIN_SUITE_RUNS} consecutive runs) the WORST
+ * run is the effective wall time and `wall_seconds` must report it.
  */
 export class ValidationContract extends ArtifactContract<ValidationMeta> {
   /** The board's budget ceiling, injected per board (defaults to the domain constant). */
@@ -250,25 +332,39 @@ export class ValidationContract extends ArtifactContract<ValidationMeta> {
     this.budgetSeconds = options.budgetSeconds ?? DEFAULT_SUITE_BUDGET_SECONDS
   }
 
-  /** Schema issues, then the cross rules of R1, then the body — every violation at once. */
-  check(component: Component): ContractResult {
+  /** Schema issues, then the cross rules of R1 in a fixed order, then the body — every violation at once. */
+  check(component: Component): ValidationResult {
     const reasons: string[] = []
+    let overBudget = false
     const { meta, issues } = this.meta(component)
     if (meta === null) reasons.push(...issues)
     else {
       const { suite } = meta
+      const at = (text: string) => reasons.push(`\`validation\` frontmatter: ${text}`)
       if (suite.passed + suite.skipped !== suite.tests) {
-        reasons.push(`\`validation\` frontmatter: suite.passed ${suite.passed} + skipped ${suite.skipped} ≠ tests ${suite.tests}`)
+        at(`suite.passed ${suite.passed} + skipped ${suite.skipped} ≠ tests ${suite.tests}`)
       }
-      if (meta.typecheck !== 'clean') reasons.push(`\`validation\` frontmatter: typecheck is ${meta.typecheck} (needs clean)`)
-      if (suite.wall_seconds > suite.budget_seconds) {
-        reasons.push(`\`validation\` frontmatter: suite.wall_seconds ${suite.wall_seconds} > budget_seconds ${suite.budget_seconds}`)
+      if (meta.typecheck !== 'clean') at(`typecheck is ${meta.typecheck} (needs clean)`)
+      // The effective wall time: the worst of the runs when the list is usable, else the declared number.
+      let effectiveWall = suite.wall_seconds
+      if (suite.runs !== undefined) {
+        if (suite.runs.length < MIN_SUITE_RUNS) at(`suite.runs needs at least ${MIN_SUITE_RUNS} runs (got ${suite.runs.length})`)
+        else {
+          const worst = Math.max(...suite.runs)
+          effectiveWall = worst
+          if (suite.wall_seconds !== worst) at(`suite.wall_seconds ${suite.wall_seconds} ≠ worst run ${worst} (report the worst)`)
+          if (worst > suite.budget_seconds) at(`suite.runs worst ${worst} > budget_seconds ${suite.budget_seconds}`)
+        }
+      }
+      if (suite.runs === undefined || suite.runs.length < MIN_SUITE_RUNS) {
+        if (suite.wall_seconds > suite.budget_seconds) at(`suite.wall_seconds ${suite.wall_seconds} > budget_seconds ${suite.budget_seconds}`)
       }
       if (suite.budget_seconds > this.budgetSeconds) {
-        reasons.push(`\`validation\` frontmatter: suite.budget_seconds ${suite.budget_seconds} > board budget ${this.budgetSeconds}`)
+        at(`suite.budget_seconds ${suite.budget_seconds} > board budget ${this.budgetSeconds}`)
       }
+      overBudget = effectiveWall > suite.budget_seconds || effectiveWall > this.budgetSeconds
       if (this.body(component).length === 0) reasons.push('`validation` body is empty (only frontmatter)')
     }
-    return reasons.length === 0 ? { ok: true } : { ok: false, reasons }
+    return reasons.length === 0 ? { ok: true } : { ok: false, reasons, overBudget }
   }
 }

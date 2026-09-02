@@ -135,3 +135,29 @@ describe('formatTree ready-for-done marker (comp-47 R7)', () => {
     expect(formatTree(tree(component({ status: 'done', phase: 'validation' }), false))).not.toMatch(/ready/)
   })
 })
+
+// ── comp-50 R3: the suite budget as text (View) — written before the code ──
+import { formatSuiteBudget } from '../src/format.ts'
+import { SuiteBudget } from '../src/contracts.ts'
+import { INITIAL_GLOBAL } from '../src/spec.ts'
+
+describe('formatSuiteBudget (comp-50 R3)', () => {
+  const at = '2026-09-02T10:00:00.000Z'
+  const def = SuiteBudget.fromGlobal(INITIAL_GLOBAL)
+  const ten = SuiteBudget.fromGlobal({ ...INITIAL_GLOBAL, suiteBudget: { seconds: 10, setAt: at } })
+  const fifteen = SuiteBudget.fromGlobal({ ...INITIAL_GLOBAL, suiteBudget: { seconds: 15, setAt: at } })
+  const twenty = SuiteBudget.fromGlobal({ ...INITIAL_GLOBAL, suiteBudget: { seconds: 20, setAt: at, reason: 'slow CI' } })
+
+  it('R3: read mode — default, board, and board with its reason', () => {
+    expect(formatSuiteBudget(def, 'read')).toBe('suite budget: 15s (default)')
+    expect(formatSuiteBudget(ten, 'read')).toBe(`suite budget: 10s (board, set ${at})`)
+    expect(formatSuiteBudget(twenty, 'read')).toBe(`suite budget: 20s (board, set ${at} — reason: slow CI)`)
+  })
+
+  it('R3: header mode — nothing on the default; the three board forms', () => {
+    expect(formatSuiteBudget(def, 'header')).toBeNull()
+    expect(formatSuiteBudget(ten, 'header')).toBe('Suite budget: 10s (board)')
+    expect(formatSuiteBudget(fifteen, 'header')).toBe('Suite budget: 15s (board)')
+    expect(formatSuiteBudget(twenty, 'header')).toBe('Suite budget: 20s (board — above default 15s: slow CI)')
+  })
+})

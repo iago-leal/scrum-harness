@@ -17,22 +17,24 @@
 import { Context, Service } from '@deepseek-ai/cordis'
 import type { Domain, TableKeyOf, TableValueOf } from '@deepseek-ai/dsh-storage-domain'
 import { boardNameOf } from './boards.ts'
-import { ReviewContract, ValidationContract } from './contracts.ts'
-import type { ContractResult, ReviewMeta } from './contracts.ts'
+import { ScrumError } from './error.ts'
+import { ReviewContract, SuiteBudget, ValidationContract } from './contracts.ts'
+import type { ContractResult, ReviewMeta, ValidationResult } from './contracts.ts'
 import {
   BOARD_COLUMNS,
   COMPONENT_PHASES,
   COMPONENT_STATUSES,
   FEATURE_STATUSES,
-  INITIAL_COUNTERS,
+  INITIAL_GLOBAL,
   RELEASE_STATUSES,
   scrumDomainSpec,
 } from './spec.ts'
 import type {
   Ceremony,
   Component,
+  BoardGlobal,
   ComponentPhase,
-  Counters,
+  CounterKind,
   Feature,
   Release,
   ScrumDomainSpec,
@@ -41,18 +43,8 @@ import type {
   WipLimits,
 } from './spec.ts'
 
-/** Stable machine-routable error for a rejected SCRUM operation. */
-export class ScrumError extends Error {
-  /**
-   * @param code - stable kebab-case classification (e.g. `not-found`,
-   * `sprint-already-active`, `task-not-in-active-sprint`).
-   * @param message - human-readable explanation.
-   */
-  constructor(readonly code: string, message: string) {
-    super(message)
-    this.name = 'ScrumError'
-  }
-}
+// ScrumError lives in error.ts (shared with the contracts); re-exported for importers.
+export { ScrumError } from './error.ts'
 
 /** The spiral artifact fields of a component (v0.12). */
 const ARTIFACT_FIELDS = ['requirements', 'requirementsReview', 'design', 'validation'] as const
@@ -76,6 +68,8 @@ export interface ReviewBriefData {
   design?: string
   /** Non-trashed tasks under the component. */
   taskCount: number
+  /** The board's suite budget ceiling in seconds (comp-50 R3), cited by the conventions. */
+  suiteBudgetSeconds?: number
 }
 
 /** Input to {@link ScrumService.createRelease}. */
@@ -197,8 +191,8 @@ export interface SprintStatus {
  * through {@link ScrumService.board}; the service owns open/close.
  */
 export class ScrumBoard {
-  /** Serializes id allocation (global counter read-modify-write). */
-  private idChain: Promise<unknown> = Promise.resolve()
+  /** Serializes every read-modify-write of the board's global (id counters, suite budget). */
+  private globalChain: Promise<unknown> = Promise.resolve()
 
   /**
    * @param domain - the opened SCRUM domain this board reads and writes.
@@ -210,21 +204,60 @@ export class ScrumBoard {
     await this.domain.close()
   }
 
+  /** The board's global as it stands (initial value before any write). */
+  private global(): BoardGlobal {
+    return this.domain.global.get() ?? INITIAL_GLOBAL
+  }
+
+  /**
+   * Read-modify-write the board's global on one serialized chain, so id
+   * allocation and the suite budget never lose each other's update.
+   * @param mutate - pure function from the current global to the next.
+   * @returns the global as written.
+   */
+  private async mutateGlobal(mutate: (current: BoardGlobal) => BoardGlobal): Promise<BoardGlobal> {
+    const write = this.globalChain.then(async () => {
+      const next = mutate(this.global())
+      await this.domain.global.set(next)
+      return next
+    })
+    this.globalChain = write.catch(() => undefined)
+    return write
+  }
+
   /**
    * Allocate the next short id for one record kind (`rel-1`, `task-42`...).
    * @param kind - counter key.
    * @param prefix - id prefix.
    * @returns the fresh unique id.
    */
-  private async nextId(kind: keyof Counters, prefix: string): Promise<string> {
-    const allocation = this.idChain.then(async () => {
-      const current = this.domain.global.get() ?? INITIAL_COUNTERS
-      const next = { ...current, [kind]: current[kind] + 1 }
-      await this.domain.global.set(next)
-      return `${prefix}-${next[kind]}`
-    })
-    this.idChain = allocation.catch(() => undefined)
-    return allocation
+  private async nextId(kind: CounterKind, prefix: string): Promise<string> {
+    const next = await this.mutateGlobal(current => ({ ...current, [kind]: current[kind] + 1 }))
+    return `${prefix}-${next[kind]}`
+  }
+
+  /**
+   * The board's suite budget (comp-50 R2): the ceiling the validation
+   * contract compares `budget_seconds` against.
+   * @returns the default when the board never set one, else the board's record.
+   */
+  suiteBudget(): SuiteBudget {
+    return SuiteBudget.fromGlobal(this.global())
+  }
+
+  /**
+   * Set or remove the board's suite budget (comp-50 R2).
+   * @param seconds - the new ceiling (> 0); `undefined` removes the record (back to the default).
+   * @param reason - required when `seconds` stands above the default (also when re-setting it).
+   * @returns the budget as it stands after the write.
+   * @throws ScrumError `validation` when the value or the missing reason is refused — the board is untouched.
+   */
+  async setSuiteBudget(seconds: number | undefined, reason?: string): Promise<SuiteBudget> {
+    const record = seconds === undefined ? undefined : SuiteBudget.validate(seconds, reason)
+    const next = await this.mutateGlobal(({ suiteBudget: _dropped, ...rest }) => (
+      record === undefined ? rest : { ...rest, suiteBudget: record }
+    ))
+    return SuiteBudget.fromGlobal(next)
   }
 
   /** @returns the current ISO timestamp. */
@@ -692,6 +725,7 @@ export class ScrumBoard {
         : {},
       ...pastRequirements && filled(component.design) ? { design: component.design } : {},
       taskCount: this.tasksOf(id).length,
+      suiteBudgetSeconds: this.suiteBudget().seconds,
     }
   }
 
@@ -713,7 +747,7 @@ export class ScrumBoard {
       const open = tasks.filter(t => t.status !== 'done')
       if (open.length > 0) reasons.push(`${open.length} task(s) not done (${open.map(t => t.id).join(', ')})`)
     }
-    const contract = new ValidationContract().check(component)
+    const contract = this.validationContractFor().check(component)
     if (!contract.ok) reasons.push(...contract.reasons)
     return reasons
   }
@@ -732,10 +766,15 @@ export class ScrumBoard {
   /**
    * The validation contract's verdict on one component's artifact.
    * @param id - component id.
-   * @returns ok, or every violated condition.
+   * @returns ok, or every violated condition plus the over-budget flag (comp-50 R4).
    */
-  validationContract(id: string): ContractResult {
-    return new ValidationContract().check(this.mustGetLive('components', id))
+  validationContract(id: string): ValidationResult {
+    return this.validationContractFor().check(this.mustGetLive('components', id))
+  }
+
+  /** The validation contract bound to THIS board's suite budget (comp-50 R2). */
+  private validationContractFor(): ValidationContract {
+    return new ValidationContract({ budgetSeconds: this.suiteBudget().seconds })
   }
 
   /** The component's tasks that count for phase gates: everything not in the trash. */
@@ -1091,7 +1130,7 @@ export class ScrumBoard {
       }
     }
     const id = await this.nextId('sprint', 'spr')
-    const counters = this.domain.global.get() ?? INITIAL_COUNTERS
+    const counters = this.global()
     const now = this.now()
     const sprint: Sprint = {
       id,

@@ -4,35 +4,44 @@
  * with stub agents, exactly the subset it reads (session header cwd).
  */
 
-import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
 import Storage from '@deepseek-ai/dsh-storage'
-import * as StorageJson from '@deepseek-ai/dsh-storage-json'
 import * as StorageDomain from '@deepseek-ai/dsh-storage-domain'
+import * as StorageMemory from '@scrum-harness/test-support/src/index.ts'
 import type { Agent, PreStepDecision } from '@deepseek-ai/dsh-agent'
 import { ScrumService } from '@scrum-harness/domain'
 import { createPreStepListener, renderSprintContext } from '../src/index.ts'
 
+// Test infrastructure (comp-50 R5): one Context per file over the in-memory
+// backend; every test gets its own `root` prefix, so the workspaces it names
+// (`join(root, 'projeto')`) are boards nobody else touches. Agents without a
+// cwd read the global board, which no test ever writes to.
+
+const filePrefix = join(tmpdir(), 'context-scrum-boards')
+/** Per-test prefix: the workspaces of one test never collide with another's. */
 let root: string
 let ctx: Context
 let listener: ReturnType<typeof createPreStepListener>
+let tests = 0
 
-beforeEach(async () => {
-  root = mkdtempSync(join(tmpdir(), 'context-scrum-'))
+beforeAll(async () => {
   ctx = new Context()
   await ctx.plugin(Storage)
-  await ctx.plugin(StorageJson, { root })
-  await ctx.plugin(StorageDomain, { backend: 'json' })
+  await ctx.plugin(StorageMemory)
+  await ctx.plugin(StorageDomain, { backend: StorageMemory.MEMORY_BACKEND })
   await ctx.plugin(ScrumService)
   listener = createPreStepListener(ctx)
 })
 
-afterEach(async () => {
+afterAll(async () => {
   await ctx.dispose?.()
-  rmSync(root, { recursive: true, force: true })
+})
+
+beforeEach(() => {
+  root = join(filePrefix, `t-${++tests}`)
 })
 
 /** Stub agent carrying only the subset the listener reads. */

@@ -11,12 +11,15 @@ import {
   BOARD_COLUMNS,
   CEREMONY_TYPES,
   COMPONENT_PHASES,
+  DEFAULT_SUITE_BUDGET_SECONDS,
   formatCeremonies,
   formatReviewBrief,
   formatShelf,
   formatSprints,
   formatSprintStatus,
+  formatSuiteBudget,
   formatTree,
+  withBudgetHeader,
 } from '@scrum-harness/domain'
 // Type-only: resolves ctx.scrum for the inject declaration.
 import type {} from '@scrum-harness/domain'
@@ -66,9 +69,34 @@ export function apply(ctx: Context): void {
       const board = await boardOf(exec)
       const sprints = board.sprints()
       const text = `${formatTree(board.tree(), sprints)}\n\nSprints:\n${formatSprints(sprints, board.releaseNames())}`
-      return Promise.resolve({ text })
+      // comp-50 R3: the board's own suite budget heads the view (never on the default).
+      return Promise.resolve({ text: withBudgetHeader(board.suiteBudget(), text) })
     },
     presentCall: () => ({ card: 'generic', title: 'Read SCRUM tree', kind: 'read' }),
+  }))
+
+  ctx.tools.register(defineTool({
+    name: 'scrum_suite_budget',
+    description:
+      'Read or set this board\'s suite time budget (comp-50): the ceiling every validation artifact\'s `budget_seconds` is checked against '
+      + '(default 15s). Without arguments it reads. With `seconds` it sets the board budget; `0` removes it (back to the default). '
+      + 'Raising it above the default requires a `reason` (also when re-setting the same value) — the reason travels in the tree header. '
+      + 'Lowering it never reopens done components; it only changes what is ready for done from now on.',
+    parameters: {
+      seconds: { type: 'number', description: 'New budget in seconds (> 0); 0 removes the board budget. Omit to read.' },
+      reason: { type: 'string', description: 'Why the budget stands above the default (required above 15s).' },
+    },
+    output: TEXT_OUTPUT,
+    async execute(args, exec) {
+      const board = await boardOf(exec)
+      if (args.seconds === undefined) return { text: formatSuiteBudget(board.suiteBudget(), 'read')! }
+      // 0 is the transport for "remove"; the Model takes number | undefined.
+      const budget = await board.setSuiteBudget(args.seconds === 0 ? undefined : args.seconds, args.reason)
+      return { text: formatSuiteBudget(budget, 'read')! }
+    },
+    presentCall: args => (args.seconds === undefined
+      ? { card: 'generic', title: 'Read suite budget', kind: 'read' }
+      : { card: 'generic', title: `Set suite budget ${args.seconds}s`, kind: 'edit' }),
   }))
 
   ctx.tools.register(defineTool({
@@ -156,7 +184,7 @@ export function apply(ctx: Context): void {
       requirements: { type: 'string', description: 'Components only: the requirements artifact — markdown with a YAML frontmatter on line 1 carrying `version: <int ≥ 1>` and, once the human approved them, `status: approved`. Gate requirements → design.' },
       requirementsReview: { type: 'string', description: 'Components only: the adversarial review — markdown with frontmatter { reviewer, reviewed_version, reviewed_digest, verdict: approved|needs-revision, round, findings: { high, medium, low } } (get it pre-filled from scrum_component_review_brief). The gate needs verdict approved with findings.high 0, covering the current requirements version and digest.' },
       design: { type: 'string', description: 'Components only: the design artifact (text + mermaid). Gate design → tdd.' },
-      validation: { type: 'string', description: 'Components only: validation evidence — markdown with frontmatter { validated_at: "<ISO date>", suite: { tests, passed, skipped?, wall_seconds, budget_seconds ≤ 15 }, typecheck: clean } and a body (what was checked and how). Gate for status done.' },
+      validation: { type: 'string', description: 'Components only: validation evidence — markdown with frontmatter { validated_at: "<ISO date>", suite: { tests, passed, skipped?, wall_seconds, budget_seconds ≤ the board\'s suite budget (see scrum_suite_budget; default 15), runs?: [a, b, c] }, typecheck: clean } and a body (what was checked and how — command and machine). With `runs` (≥ 3 consecutive runs, written inline) the WORST run counts and wall_seconds must report it. Gate for status done.' },
       estimate: { type: 'number', description: 'Tasks only.' },
       targetDate: { type: 'string', description: 'Releases only (ISO date).' },
       status: { type: 'string', description: 'Releases, features and components (each level has its own workflow). Component `done` is gated: phase validation, every task done, and a `validation` artifact honoring its contract — a refusal names every missing condition.' },
@@ -194,6 +222,10 @@ export function apply(ctx: Context): void {
       if (id.startsWith('comp-') && args.validation !== undefined) {
         const contract = board.validationContract(id)
         notes.push(`validation contract: ${contract.ok ? 'ok' : `${contract.reasons.join('; ')} — will block status done`}`)
+        // comp-50 R4: guidance from the Model's flags, never from the reasons' text.
+        if (!contract.ok && contract.overBudget) notes.push('over budget: add a test-refactor task before done')
+        const budget = board.suiteBudget()
+        if (budget.aboveDefault) notes.push(`budget above default (${budget.seconds}s > ${DEFAULT_SUITE_BUDGET_SECONDS}s)`)
       }
       return { text: notes.length === 0 ? `Updated ${id}.` : `Updated ${id}. ${notes.join(' | ')}` }
     },

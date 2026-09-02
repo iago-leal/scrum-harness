@@ -5,14 +5,13 @@
  */
 
 import { createHash } from 'node:crypto'
-import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
 import Storage from '@deepseek-ai/dsh-storage'
-import * as StorageJson from '@deepseek-ai/dsh-storage-json'
 import * as StorageDomain from '@deepseek-ai/dsh-storage-domain'
+import * as StorageMemory from '@scrum-harness/test-support/src/index.ts'
 import SystemPrompt from '@deepseek-ai/dsh-system-prompt'
 import ToolRuntime from '@deepseek-ai/dsh-tools'
 import type { CallId } from '@deepseek-ai/dsh-tools'
@@ -25,38 +24,52 @@ const REQ_BODY = 'R1 — must work.'
 const CONTRACT_REQ = `---\nversion: 1\nstatus: approved\n---\n${REQ_BODY}`
 const CONTRACT_REVIEW = `---\nreviewer: subagent\nreviewed_version: 1\nreviewed_digest: ${createHash('sha1').update(REQ_BODY).digest('hex').slice(0, 8)}\nverdict: approved\nround: 1\nfindings: { high: 0, medium: 0, low: 0 }\n---\nNo blocking finding.`
 
-let root: string
+// Test infrastructure (comp-50 R5): one Context per file over the in-memory
+// backend; every test gets its own workspace board through the session cwd
+// the tools route by. Nothing here writes to the global board except the
+// routing test, which opts out explicitly with `{ cwd: null }`.
+
+/** A path prefix for the boards of this file (never touches the disk). */
+const root = join(tmpdir(), 'tool-scrum-boards')
 let ctx: Context
 let calls = 0
+let boards = 0
+/** The workspace of the CURRENT test — `run()` routes there by default. */
+let currentWs: string
 
-beforeEach(async () => {
-  root = mkdtempSync(join(tmpdir(), 'tool-scrum-'))
+beforeAll(async () => {
   ctx = new Context()
   await ctx.plugin(Storage)
-  await ctx.plugin(StorageJson, { root })
-  await ctx.plugin(StorageDomain, { backend: 'json' })
+  await ctx.plugin(StorageMemory)
+  await ctx.plugin(StorageDomain, { backend: StorageMemory.MEMORY_BACKEND })
   await ctx.plugin(ScrumService)
   await ctx.plugin(SystemPrompt, { persona: '' })
   await ctx.plugin(ToolRuntime, {})
   await ctx.plugin(ToolScrum)
 })
 
-afterEach(async () => {
+afterAll(async () => {
   await ctx.dispose?.()
-  rmSync(root, { recursive: true, force: true })
+})
+
+beforeEach(() => {
+  currentWs = join(root, `ws-${++boards}`)
 })
 
 /**
  * Run one tool through the registry; returns the text of the first block.
  * `cwd` simulates the calling session's workspace (agent → session header),
- * exactly the field the tools route boards by; absent = global board.
+ * exactly the field the tools route boards by. Defaults to the current
+ * test's workspace; `null` calls WITHOUT a cwd (global board) — only the
+ * routing test does that.
  */
-async function run(name: string, args: unknown, cwd?: string): Promise<{ isError: boolean; text: string }> {
+async function run(name: string, args: unknown, options: { cwd?: string | null } = {}): Promise<{ isError: boolean; text: string }> {
+  const cwd = options.cwd === undefined ? currentWs : options.cwd
   const result = await ctx.tools.execute({
     callId: `call-${++calls}` as CallId,
     name,
     arguments: args,
-    ...cwd === undefined ? {} : { agent: { session: { header: { cwd } } } as never },
+    ...cwd === null ? {} : { agent: { session: { header: { cwd } } } as never },
     signal: new AbortController().signal,
   })
   const first = result.content[0]
@@ -170,18 +183,19 @@ describe('tool-scrum', () => {
     expect((await run('scrum_archive_completed', {})).text).toContain('Nothing to archive')
   })
 
-  it('routes each call to the calling session workspace board (v0.5)', async () => {
+  it('R5: routes each call to the calling session workspace board; no cwd → the global board (v0.5)', async () => {
     const cwd = join(root, 'projeto-x')
-    expect((await run('scrum_release_create', { name: 'X v1' }, cwd)).text).toContain('rel-1')
+    expect((await run('scrum_release_create', { name: 'X v1' }, { cwd })).text).toContain('rel-1')
 
-    // The global board (no cwd) stays empty; the workspace board sees it.
-    expect((await run('scrum_tree', {})).text).toContain('Empty backlog')
-    expect((await run('scrum_tree', {}, cwd)).text).toContain('X v1')
+    // A call WITHOUT a cwd reaches the global board, which never saw that
+    // release (the opt-out is explicit: every other call in this file carries a cwd).
+    expect((await run('scrum_tree', {}, { cwd: null })).text).toContain('Empty backlog')
+    expect((await run('scrum_tree', {}, { cwd })).text).toContain('X v1')
 
     // A sibling workspace is a different board with its own id sequence.
     const other = join(root, 'projeto-y')
-    expect((await run('scrum_release_create', { name: 'Y v1' }, other)).text).toContain('rel-1')
-    expect((await run('scrum_tree', {}, other)).text).not.toContain('X v1')
+    expect((await run('scrum_release_create', { name: 'Y v1' }, { cwd: other })).text).toContain('rel-1')
+    expect((await run('scrum_tree', {}, { cwd: other })).text).not.toContain('X v1')
   })
 
   it('materializes business rejections as tool errors', async () => {
@@ -295,5 +309,67 @@ describe('tool-scrum', () => {
     expect(done.text).toMatch(/phase is requirements \(needs validation\)/)
     expect(done.text).toMatch(/no task under the component/)
     expect(done.text).toMatch(/cannot set status done/)
+  })
+})
+
+// ── comp-50: the suite budget through the tools (R3, R4) — written before the code ──
+
+describe('suite budget tools (comp-50)', () => {
+  it('R3: scrum_suite_budget reads, sets, refuses a raise without a reason, and removes', async () => {
+    expect(ctx.tools.schemas().map(s => s.name)).toContain('scrum_suite_budget')
+    expect((await run('scrum_suite_budget', {})).text).toBe('suite budget: 15s (default)')
+
+    expect((await run('scrum_suite_budget', { seconds: 12 })).text).toMatch(/^suite budget: 12s \(board, set \d{4}-/)
+    expect((await run('scrum_suite_budget', {})).text).toMatch(/^suite budget: 12s \(board/)
+
+    const refused = await run('scrum_suite_budget', { seconds: 20 })
+    expect(refused.isError).toBe(true)
+    expect(refused.text).toMatch(/requires a reason/)
+    expect((await run('scrum_suite_budget', { seconds: 20, reason: 'slow CI' })).text).toMatch(/20s \(board, set .* — reason: slow CI\)$/)
+
+    expect((await run('scrum_suite_budget', { seconds: 0 })).text).toBe('suite budget: 15s (default)')
+    const bad = await run('scrum_suite_budget', { seconds: -3 })
+    expect(bad.isError).toBe(true)
+  })
+
+  it('R3: scrum_tree carries the budget header only when the board set one — even on an empty tree', async () => {
+    expect((await run('scrum_tree', {})).text).not.toMatch(/Suite budget/)
+    await run('scrum_suite_budget', { seconds: 10 })
+    const empty = await run('scrum_tree', {})
+    expect(empty.text).toMatch(/^Suite budget: 10s \(board\)\n\n/)
+    expect(empty.text).toContain('Empty backlog')
+
+    await run('scrum_release_create', { name: 'v1.0' })
+    await run('scrum_suite_budget', { seconds: 20, reason: 'slow CI' })
+    const tree = await run('scrum_tree', {})
+    expect(tree.text).toMatch(/^Suite budget: 20s \(board — above default 15s: slow CI\)\n\n/)
+    expect(tree.text).toContain('rel-1 v1.0')
+  })
+
+  it('R4: scrum_item_update adds the over-budget advice and the above-default note from the Model, never otherwise', async () => {
+    await run('scrum_release_create', { name: 'v1.0' })
+    await run('scrum_feature_create', { releaseId: 'rel-1', title: 'F' })
+    await run('scrum_component_create', { featureId: 'feat-1', title: 'C' })
+    const evidence = (suite: string) => `---\nvalidated_at: 2026-09-02\nsuite: { tests: 1, passed: 1, ${suite} }\ntypecheck: clean\n---\nSuite green.`
+
+    const slow = await run('scrum_item_update', { id: 'comp-1', validation: evidence('wall_seconds: 16, budget_seconds: 15') })
+    expect(slow.text).toMatch(/validation contract: .*wall_seconds 16 > budget_seconds 15/)
+    expect(slow.text).toMatch(/over budget: add a test-refactor task before done/)
+    expect(slow.text).not.toMatch(/budget above default/)
+
+    // A declaration error (budget above the board) is not a slow suite: no refactor advice.
+    const declared = await run('scrum_item_update', { id: 'comp-1', validation: evidence('wall_seconds: 5, budget_seconds: 20') })
+    expect(declared.text).toMatch(/validation contract: .*budget_seconds 20 > board budget 15/)
+    expect(declared.text).not.toMatch(/over budget/)
+
+    await run('scrum_suite_budget', { seconds: 20, reason: 'slow CI' })
+    const fine = await run('scrum_item_update', { id: 'comp-1', validation: evidence('wall_seconds: 18, budget_seconds: 20') })
+    expect(fine.text).toMatch(/validation contract: ok/)
+    expect(fine.text).toMatch(/budget above default \(20s > 15s\)/)
+    expect(fine.text).not.toMatch(/over budget/)
+
+    // Patches that do not touch the validation stay quiet about budgets.
+    const title = await run('scrum_item_update', { id: 'comp-1', title: 'C2' })
+    expect(title.text).not.toMatch(/budget/)
   })
 })

@@ -18,6 +18,9 @@
     },
     {
       "path": "packages/context-scrum"
+    },
+    {
+      "path": "packages/test-support"
     }
   ]
 }

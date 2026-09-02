@@ -4,14 +4,13 @@
  */
 
 import { createHash } from 'node:crypto'
-import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
 import Storage from '@deepseek-ai/dsh-storage'
-import * as StorageJson from '@deepseek-ai/dsh-storage-json'
 import * as StorageDomain from '@deepseek-ai/dsh-storage-domain'
+import * as StorageMemory from '@scrum-harness/test-support/src/index.ts'
 import WebServer from '@deepseek-ai/dsh-host-webserver'
 import { ScrumService } from '@scrum-harness/domain'
 import * as ScrumApi from '../src/index.ts'
@@ -22,35 +21,51 @@ const REQ_BODY = 'R1 — must work.'
 const CONTRACT_REQ = `---\nversion: 1\nstatus: approved\n---\n${REQ_BODY}`
 const CONTRACT_REVIEW = `---\nreviewer: subagent\nreviewed_version: 1\nreviewed_digest: ${createHash('sha1').update(REQ_BODY).digest('hex').slice(0, 8)}\nverdict: approved\nround: 1\nfindings: { high: 0, medium: 0, low: 0 }\n---\nNo blocking finding.`
 
-let root: string
+// Test infrastructure (comp-50 R5): one webserver + Context per file over the
+// in-memory backend; every test gets its own workspace board through the
+// `workspace` field the API routes by. Raw fetches without a workspace read
+// the global board, which no test ever writes to.
+
+/** A path prefix for the boards of this file (never touches the disk). */
+const root = join(tmpdir(), 'scrum-api-boards')
 let ctx: Context
 let base: string
+let boards = 0
+/** The workspace of the CURRENT test — `act()` and `state()` route there by default. */
+let currentWs: string
 
-beforeEach(async () => {
-  root = mkdtempSync(join(tmpdir(), 'scrum-api-'))
+beforeAll(async () => {
   ctx = new Context()
   await ctx.plugin(Storage)
-  await ctx.plugin(StorageJson, { root })
-  await ctx.plugin(StorageDomain, { backend: 'json' })
+  await ctx.plugin(StorageMemory)
+  await ctx.plugin(StorageDomain, { backend: StorageMemory.MEMORY_BACKEND })
   await ctx.plugin(ScrumService)
   await ctx.plugin(WebServer, { host: '127.0.0.1', port: 0 })
   await ctx.plugin(ScrumApi)
   base = `http://127.0.0.1:${ctx.webServer.port}`
 })
 
-afterEach(async () => {
+afterAll(async () => {
   await ctx.dispose?.()
-  rmSync(root, { recursive: true, force: true })
 })
 
-/** POST one action as JSON. */
-async function act(body: unknown): Promise<{ status: number; json: any }> {
+beforeEach(() => {
+  currentWs = join(root, `ws-${++boards}`)
+})
+
+/** POST one action as JSON, routed to the current test's workspace unless the body names one. */
+async function act(body: Record<string, unknown>): Promise<{ status: number; json: any }> {
   const response = await fetch(`${base}/scrum-api/action`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify(body),
+    body: JSON.stringify({ workspace: currentWs, ...body }),
   })
   return { status: response.status, json: await response.json() }
+}
+
+/** GET the state of the current test's workspace board. */
+async function state(): Promise<any> {
+  return (await fetch(`${base}/scrum-api/state?workspace=${encodeURIComponent(currentWs)}`)).json()
 }
 
 describe('scrum-api', () => {
@@ -247,7 +262,7 @@ describe('scrum-api', () => {
     expect(refused.status).toBe(409)
     expect(refused.json.code).toBe('done-gate')
     expect(refused.json.message).toMatch(/needs validation/)
-    const state = await (await fetch(`${base}/scrum-api/state`)).json()
-    expect(state.state.tree.releases[0].features[0].components[0].readyForDone).toBe(false)
+    const current = await state()
+    expect(current.state.tree.releases[0].features[0].components[0].readyForDone).toBe(false)
   })
 })

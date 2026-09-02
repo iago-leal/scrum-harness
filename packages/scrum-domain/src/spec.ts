@@ -212,19 +212,40 @@ export const ceremonySchema = z.object({
 })
 export type Ceremony = z.infer<typeof ceremonySchema>
 
-/** Monotonic id counters, one per record kind (short readable ids: rel-1, task-42...). */
-export const countersSchema = z.object({
+/**
+ * The board's suite budget as persisted (comp-50 R2): the ceiling the
+ * validation contract compares `budget_seconds` against, when it was set,
+ * and the reason when it stands above the domain default.
+ */
+export const suiteBudgetRecordSchema = z.object({
+  seconds: z.number().gt(0),
+  setAt: z.string(),
+  reason: z.string().optional(),
+})
+export type SuiteBudgetRecord = z.infer<typeof suiteBudgetRecordSchema>
+
+/**
+ * The board's global value: monotonic id counters, one per record kind
+ * (short readable ids: rel-1, task-42...), plus the optional suite budget.
+ * `suiteBudget` is `.optional()` and never nullable on purpose — legacy
+ * media without the key parse as-is, no version bump.
+ */
+export const globalSchema = z.object({
   release: z.number().int().nonnegative(),
   feature: z.number().int().nonnegative(),
   component: z.number().int().nonnegative(),
   task: z.number().int().nonnegative(),
   sprint: z.number().int().nonnegative(),
   ceremony: z.number().int().nonnegative(),
+  suiteBudget: suiteBudgetRecordSchema.optional(),
 })
-export type Counters = z.infer<typeof countersSchema>
+export type BoardGlobal = z.infer<typeof globalSchema>
 
-/** The initial counters value (before any record exists). */
-export const INITIAL_COUNTERS: Counters = {
+/** The id-counter keys of the global (the record kinds). */
+export type CounterKind = 'release' | 'feature' | 'component' | 'task' | 'sprint' | 'ceremony'
+
+/** The initial global value (before any record exists; default budget). */
+export const INITIAL_GLOBAL: BoardGlobal = {
   release: 0, feature: 0, component: 0, task: 0, sprint: 0, ceremony: 0,
 }
 
@@ -241,7 +262,7 @@ export function scrumDomainSpec(name: string) {
   return defineDomain({
     name,
     version: 1,
-    global: { schema: countersSchema, initial: INITIAL_COUNTERS },
+    global: { schema: globalSchema, initial: INITIAL_GLOBAL },
     tables: {
       releases: domainTable<string, Release>(releaseSchema),
       features: domainTable<string, Feature>(featureSchema),

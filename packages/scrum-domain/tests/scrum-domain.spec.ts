@@ -7,35 +7,68 @@
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
 import Storage from '@deepseek-ai/dsh-storage'
 import * as StorageJson from '@deepseek-ai/dsh-storage-json'
 import * as StorageDomain from '@deepseek-ai/dsh-storage-domain'
+import * as StorageMemory from '@scrum-harness/test-support/src/index.ts'
 import { ScrumService, ScrumError } from '../src/service.ts'
 import type { ScrumBoard } from '../src/service.ts'
 import { boardNameOf, GLOBAL_BOARD_NAME } from '../src/boards.ts'
 import { componentSchema, sprintSchema } from '../src/spec.ts'
 
-let root: string
-let ctx: Context
-/** The global fallback board; workspace-agnostic suites run on it. */
-let scrum: ScrumBoard
+// Test infrastructure (comp-50 R5): ONE Context per file over the in-memory
+// backend (real hub + storage-domain + ScrumService; only the medium is a
+// Map — the JSON backend's fsync per mutation was the suite's wall time),
+// and one fresh board per test: the per-workspace boards of v0.5 give the
+// isolation (own unit, own id counters), so tests never share state and
+// never touch the global board unless they say so explicitly. Only the
+// lifecycle suite (close/reopen) builds its own Context on the JSON backend —
+// durability is what it proves.
 
-beforeEach(async () => {
-  root = mkdtempSync(join(tmpdir(), 'scrum-domain-'))
-  ctx = new Context()
-  await ctx.plugin(Storage)
-  await ctx.plugin(StorageJson, { root })
-  await ctx.plugin(StorageDomain, { backend: 'json' })
-  const fiber = ctx.plugin(ScrumService)
-  await fiber
-  scrum = await ctx.scrum.board()
+/** Open the real storage stack + ScrumService on a JSON root (durable medium). */
+async function openJsonStack(jsonRoot: string): Promise<Context> {
+  const context = new Context()
+  await context.plugin(Storage)
+  await context.plugin(StorageJson, { root: jsonRoot })
+  await context.plugin(StorageDomain, { backend: 'json' })
+  await context.plugin(ScrumService)
+  return context
+}
+
+/** Open the same stack over the in-memory backend. */
+async function openMemoryStack(): Promise<Context> {
+  const context = new Context()
+  await context.plugin(Storage)
+  await context.plugin(StorageMemory)
+  await context.plugin(StorageDomain, { backend: StorageMemory.MEMORY_BACKEND })
+  await context.plugin(ScrumService)
+  return context
+}
+
+/** A path prefix for the boards of this file (never touches the disk). */
+const root = join(tmpdir(), 'scrum-domain-boards')
+let ctx: Context
+/** The board of the CURRENT test — fresh for every `it`. */
+let scrum: ScrumBoard
+let boards = 0
+
+/** A never-used workspace path → a brand-new board (canonicalized, need not exist). */
+function freshBoard(): Promise<ScrumBoard> {
+  return ctx.scrum.board(join(root, `ws-${++boards}`))
+}
+
+beforeAll(async () => {
+  ctx = await openMemoryStack()
 })
 
-afterEach(async () => {
+afterAll(async () => {
   await ctx.dispose?.()
-  rmSync(root, { recursive: true, force: true })
+})
+
+beforeEach(async () => {
+  scrum = await freshBoard()
 })
 
 /** Creates rel > feat > comp and returns the component id. */
@@ -417,23 +450,49 @@ describe('ceremonies', () => {
   })
 })
 
+// Lifecycle suites own their Context (they dispose and reopen it) on a
+// separate JSON root; the module-level ctx/scrum are never reassigned (R5 c).
 describe('persistence', () => {
-  it('survives a full close/reopen cycle on the same JSON medium', async () => {
-    const componentId = await seedComponent()
-    await scrum.createTask({ componentId, title: 'durable' })
-    await ctx.dispose?.()
+  let lifeRoot: string
+  let life: Context
 
-    ctx = new Context()
-    await ctx.plugin(Storage)
-    await ctx.plugin(StorageJson, { root })
-    await ctx.plugin(StorageDomain, { backend: 'json' })
-    await ctx.plugin(ScrumService)
-    scrum = await ctx.scrum.board()
-    const tree = scrum.tree()
+  beforeEach(async () => {
+    lifeRoot = mkdtempSync(join(tmpdir(), 'scrum-domain-life-'))
+    life = await openJsonStack(lifeRoot)
+  })
+
+  afterEach(async () => {
+    await life.dispose?.()
+    rmSync(lifeRoot, { recursive: true, force: true })
+  })
+
+  it('survives a full close/reopen cycle on the same JSON medium', async () => {
+    const board = await life.scrum.board()
+    const release = await board.createRelease({ name: 'v1.0' })
+    const feature = await board.createFeature({ releaseId: release.id, title: 'Login' })
+    const component = await board.createComponent({ featureId: feature.id, title: 'OAuth flow' })
+    await board.createTask({ componentId: component.id, title: 'durable' })
+    await life.dispose?.()
+
+    life = await openJsonStack(lifeRoot)
+    const reopened = await life.scrum.board()
+    const tree = reopened.tree()
     expect(tree.releases[0]!.features[0]!.components[0]!.tasks[0]!.title).toBe('durable')
     // Counters survive too: the next task id continues the sequence.
-    const next = await scrum.createTask({ componentId, title: 'second' })
+    const next = await reopened.createTask({ componentId: component.id, title: 'second' })
     expect(next.id).toBe('task-2')
+  })
+
+  it('per-workspace boards survive close/reopen on their own media', async () => {
+    const cwd = join(lifeRoot, 'projeto-a')
+    const boardA = await life.scrum.board(cwd)
+    const release = await boardA.createRelease({ name: 'durável' })
+    await life.dispose?.()
+
+    life = await openJsonStack(lifeRoot)
+    const reopened = await life.scrum.board(cwd)
+    expect(reopened.tree().releases.map(r => r.id)).toEqual([release.id])
+    expect((await life.scrum.board()).tree().releases).toHaveLength(0)
   })
 })
 
@@ -499,8 +558,8 @@ describe('boards per workspace (v0.5)', () => {
 
     expect(boardA.tree().releases.map(r => r.name)).toEqual(['A v1'])
     expect(boardB.tree().releases.map(r => r.name)).toEqual(['B v1'])
-    // The global board sees neither.
-    expect(scrum.tree().releases).toHaveLength(0)
+    // The global board sees neither (no shared-Context test ever writes to it — R5 b).
+    expect((await ctx.scrum.board()).tree().releases).toHaveLength(0)
 
     // Sprints are independent: both boards can have an active sprint at once.
     const sprintA = await boardA.planSprint({ goal: 'a' })
@@ -516,23 +575,8 @@ describe('boards per workspace (v0.5)', () => {
     const again = await ctx.scrum.board(`${join(root, 'projeto-a')}/`)
     expect(again).toBe(first)
     const global1 = await ctx.scrum.board()
-    expect(global1).toBe(scrum)
-  })
-
-  it('per-workspace boards survive close/reopen on their own media', async () => {
-    const cwd = join(root, 'projeto-a')
-    const boardA = await ctx.scrum.board(cwd)
-    const release = await boardA.createRelease({ name: 'durável' })
-    await ctx.dispose?.()
-
-    ctx = new Context()
-    await ctx.plugin(Storage)
-    await ctx.plugin(StorageJson, { root })
-    await ctx.plugin(StorageDomain, { backend: 'json' })
-    await ctx.plugin(ScrumService)
-    const reopened = await ctx.scrum.board(cwd)
-    expect(reopened.tree().releases.map(r => r.id)).toEqual([release.id])
-    expect((await ctx.scrum.board()).tree().releases).toHaveLength(0)
+    expect(await ctx.scrum.board()).toBe(global1)
+    expect(global1).not.toBe(scrum)
   })
 })
 
@@ -908,5 +952,77 @@ describe('done gate (comp-47)', () => {
     await scrum.updateItem(id, { status: 'done' })
     expect(componentOf(id).readyForDone).toBe(false)
     expect(componentOf(await seedComponent()).readyForDone).toBe(false)
+  })
+})
+
+// ── comp-50: the board's suite budget (R2) — written before the code ──────
+
+describe('suite budget (comp-50 R2)', () => {
+  it('R2: reads the default, sets a board budget, refuses a raise without a reason, and removes back to the default', async () => {
+    expect(scrum.suiteBudget()).toEqual({ seconds: 15, source: 'default', aboveDefault: false })
+
+    const twelve = await scrum.setSuiteBudget(12)
+    expect(twelve).toMatchObject({ seconds: 12, source: 'board', aboveDefault: false })
+    expect(scrum.suiteBudget()).toEqual(twelve)
+
+    await expect(scrum.setSuiteBudget(20)).rejects.toMatchObject({ code: 'validation' })
+    await expect(scrum.setSuiteBudget(0)).rejects.toMatchObject({ code: 'validation' })
+    // The refused writes left the board untouched.
+    expect(scrum.suiteBudget().seconds).toBe(12)
+
+    const twenty = await scrum.setSuiteBudget(20, 'slow CI')
+    expect(twenty).toMatchObject({ seconds: 20, source: 'board', aboveDefault: true, reason: 'slow CI' })
+    // Re-setting the same value above default needs the reason again.
+    await expect(scrum.setSuiteBudget(20)).rejects.toThrow(/requires a reason/)
+
+    expect(await scrum.setSuiteBudget(undefined)).toEqual({ seconds: 15, source: 'default', aboveDefault: false })
+    expect(scrum.suiteBudget().source).toBe('default')
+  })
+
+  it('R2: the budget shares the global with the id counters — both survive each other', async () => {
+    const componentId = await seedComponent()
+    await scrum.setSuiteBudget(12)
+    // Counters continued from where they were: the next task is task-1, the next release rel-2.
+    expect((await scrum.createTask({ componentId, title: 't' })).id).toBe('task-1')
+    expect((await scrum.createRelease({ name: 'v2' })).id).toBe('rel-2')
+    // …and allocating ids did not drop the budget.
+    expect(scrum.suiteBudget().seconds).toBe(12)
+    // Concurrent writes serialize on the same chain: no lost update either way.
+    await Promise.all([scrum.setSuiteBudget(10), scrum.createRelease({ name: 'v3' }), scrum.setSuiteBudget(11)])
+    expect(scrum.suiteBudget().seconds).toBe(11)
+    expect(scrum.tree().releases.map(r => r.id)).toEqual(['rel-1', 'rel-2', 'rel-3'])
+  })
+
+  it('R2: the board budget is injected into the done gate — a wider board accepts a slower suite', async () => {
+    const id = await seedComponent()
+    await toValidation(id)
+    const slow = VALID_VALIDATION.replace('wall_seconds: 12, budget_seconds: 15', 'wall_seconds: 18, budget_seconds: 20')
+    await scrum.updateItem(id, { validation: slow })
+    const refused = scrum.doneReadiness(id)
+    expect(refused.ok).toBe(false)
+    expect(!refused.ok && refused.reasons.join()).toMatch(/budget_seconds 20 > board budget 15/)
+    expect(scrum.validationContract(id)).toMatchObject({ ok: false, overBudget: true })
+
+    await scrum.setSuiteBudget(20, 'slow CI')
+    expect(scrum.doneReadiness(id)).toEqual({ ok: true })
+    expect(scrum.validationContract(id)).toEqual({ ok: true })
+    expect((await scrum.updateItem(id, { status: 'done' })).status).toBe('done')
+  })
+
+  it('R2: lowering the budget never reopens a done component, but readyForDone reflects the new ceiling', async () => {
+    const done = await seedComponent()
+    await toValidation(done)
+    await scrum.updateItem(done, { status: 'done', validation: VALID_VALIDATION })
+    const pending = await scrum.createComponent({ featureId: 'feat-1', title: 'Pending' })
+    await toValidation(pending.id)
+    await scrum.updateItem(pending.id, { validation: VALID_VALIDATION })
+    expect(componentOf(pending.id).readyForDone).toBe(true)
+
+    await scrum.setSuiteBudget(10)
+    expect(componentOf(done).status).toBe('done')
+    expect(componentOf(done).readyForDone).toBe(false)
+    expect(componentOf(pending.id).readyForDone).toBe(false)
+    const readiness = scrum.doneReadiness(pending.id)
+    expect(!readiness.ok && readiness.reasons.join()).toMatch(/budget_seconds 15 > board budget 10/)
   })
 })

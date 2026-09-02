@@ -4,7 +4,8 @@
  * @module @scrum-harness/domain/format
  */
 
-import { ReviewContract } from './contracts.ts'
+import { DEFAULT_SUITE_BUDGET_SECONDS, ReviewContract } from './contracts.ts'
+import type { SuiteBudget } from './contracts.ts'
 import type { Ceremony, Component, Sprint } from './spec.ts'
 import type { ReviewBriefData, ScrumTree, ShelfLists, SprintStatus } from './service.ts'
 
@@ -60,7 +61,7 @@ export function formatReviewBrief(data: ReviewBriefData): string {
     '- Artifacts (requirements, requirementsReview, design, validation) are markdown with a YAML frontmatter on line 1.',
     '- The spiral: requirements → design → tdd → construction → validation; forward steps go through gates evaluated in the',
     '  domain (inside the table mutator); every refusal names the missing condition; retreats are free and logged.',
-    '- Tests before code (TDD); validation records the suite duration against the board budget.',
+    `- Tests before code (TDD); validation records the suite duration against the board budget (currently ${data.suiteBudgetSeconds ?? DEFAULT_SUITE_BUDGET_SECONDS}s; worst of ≥ 3 runs when \`suite.runs\` is given).`,
   ].join('\n'))
   blocks.push([
     '## Guiding questions (do not stop at them)',
@@ -213,4 +214,35 @@ export function formatCeremonies(ceremonies: Ceremony[]): string {
       return `${c.id} ${c.type} @${c.sprintId} ${c.at}${author}\n${notes}`
     })
     .join('\n')
+}
+
+/**
+ * The board's suite budget as text (comp-50 R3).
+ * @param budget - what `ScrumBoard.suiteBudget()` returned.
+ * @param mode - `read`: the tool's one-line answer; `header`: the line the
+ *   tree views prefix when the budget is the board's own (null on the default).
+ * @returns the line, or null (header mode on the default budget).
+ */
+export function formatSuiteBudget(budget: SuiteBudget, mode: 'read' | 'header'): string | null {
+  if (mode === 'read') {
+    if (budget.source === 'default') return `suite budget: ${budget.seconds}s (default)`
+    const reason = budget.reason === undefined ? '' : ` — reason: ${budget.reason}`
+    return `suite budget: ${budget.seconds}s (board, set ${budget.setAt}${reason})`
+  }
+  if (budget.source === 'default') return null
+  if (budget.aboveDefault) {
+    return `Suite budget: ${budget.seconds}s (board — above default ${DEFAULT_SUITE_BUDGET_SECONDS}s: ${budget.reason})`
+  }
+  return `Suite budget: ${budget.seconds}s (board)`
+}
+
+/**
+ * Prefix a tree view with the budget header when the board set its own budget (comp-50 R3).
+ * @param budget - the board's budget.
+ * @param text - the rendered view.
+ * @returns the view, headed by the budget line when there is one.
+ */
+export function withBudgetHeader(budget: SuiteBudget, text: string): string {
+  const header = formatSuiteBudget(budget, 'header')
+  return header === null ? text : `${header}\n\n${text}`
 }

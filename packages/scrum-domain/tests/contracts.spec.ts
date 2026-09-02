@@ -237,3 +237,111 @@ describe('ValidationContract (comp-47 R1, R2)', () => {
     expect(reasons(validation({}, '   ')).join()).toMatch(/`validation` body is empty \(only frontmatter\)/)
   })
 })
+
+// ── comp-50: measurement convention (R1) and the over-budget flag (R4) ────
+// Written BEFORE the code (TDD): every case maps to a requirement of comp-50.
+
+describe('ValidationContract runs (comp-50 R1) and overBudget (R4)', () => {
+  const c = new ValidationContract()
+  const suite = (fields: string) => validation({ suite: `{ tests: 112, passed: 112, ${fields} }` })
+  const check = (text: string, contract = c) => contract.check(comp({ validation: text }))
+  const reasons = (text: string, contract = c): string[] => {
+    const result = check(text, contract)
+    return result.ok ? [] : result.reasons
+  }
+  const overBudget = (text: string, contract = c): boolean | undefined => {
+    const result = check(text, contract)
+    return result.ok ? undefined : result.overBudget
+  }
+
+  it('R1: without runs the declared wall_seconds counts, as before; the ok result stays exactly { ok: true }', () => {
+    expect(check(suite('wall_seconds: 9.8, budget_seconds: 10'))).toEqual({ ok: true })
+    expect(reasons(suite('wall_seconds: 10.2, budget_seconds: 10')).join()).toMatch(/suite\.wall_seconds 10\.2 > budget_seconds 10/)
+  })
+
+  it('R1: an inline runs list parses through the house frontmatter parser; the worst run counts', () => {
+    expect(check(suite('wall_seconds: 9.8, budget_seconds: 10, runs: [9.1, 9.8, 9.4]'))).toEqual({ ok: true })
+    // Worst run over the budget: ONE reason, worded on runs; no duplicate simple reason.
+    const over = reasons(suite('wall_seconds: 10.4, budget_seconds: 10, runs: [9.1, 10.4, 9.4]'))
+    expect(over).toEqual(['`validation` frontmatter: suite.runs worst 10.4 > budget_seconds 10'])
+  })
+
+  it('R1: wall_seconds must equal the worst run — lower (cherry-picking) and higher both refused with ≠', () => {
+    expect(reasons(suite('wall_seconds: 9.1, budget_seconds: 10, runs: [9.1, 9.8, 9.4]')).join())
+      .toMatch(/suite\.wall_seconds 9\.1 ≠ worst run 9\.8 \(report the worst\)/)
+    expect(reasons(suite('wall_seconds: 9.9, budget_seconds: 10, runs: [9.1, 9.8, 9.4]')).join())
+      .toMatch(/suite\.wall_seconds 9\.9 ≠ worst run 9\.8 \(report the worst\)/)
+    // Both violations at once: the wrong wall AND the worst over budget.
+    const both = reasons(suite('wall_seconds: 9.0, budget_seconds: 10, runs: [9.0, 10.5, 9.4]'))
+    expect(both).toHaveLength(2)
+    expect(both.join()).toMatch(/≠ worst run 10\.5/)
+    expect(both.join()).toMatch(/suite\.runs worst 10\.5 > budget_seconds 10/)
+  })
+
+  it('R1: runs needs at least 3 values — a cross rule reported next to the others, [] counts as 0', () => {
+    expect(reasons(suite('wall_seconds: 9.8, budget_seconds: 10, runs: [9.1, 9.8]')).join())
+      .toMatch(/suite\.runs needs at least 3 runs \(got 2\)/)
+    expect(reasons(suite('wall_seconds: 9.8, budget_seconds: 10, runs: []')).join())
+      .toMatch(/suite\.runs needs at least 3 runs \(got 0\)/)
+    // Not a schema failure: the other cross rules still speak (typecheck here).
+    const withTypecheck = reasons(validation({ suite: '{ tests: 112, passed: 112, wall_seconds: 9.8, budget_seconds: 10, runs: [9.8] }', typecheck: 'errors' }))
+    expect(withTypecheck.join()).toMatch(/needs at least 3 runs \(got 1\)/)
+    expect(withTypecheck.join()).toMatch(/typecheck is errors/)
+    // With too few runs the declared wall is the effective one (no worst to compare).
+    expect(withTypecheck.join()).not.toMatch(/≠ worst run/)
+  })
+
+  it('R4: overBudget rides the refused result when the effective wall exceeds budget_seconds or the board budget', () => {
+    expect(overBudget(suite('wall_seconds: 10.2, budget_seconds: 10'))).toBe(true)
+    expect(overBudget(suite('wall_seconds: 10.4, budget_seconds: 10, runs: [9.1, 10.4, 9.4]'))).toBe(true)
+    // Declared budget above the board's ceiling but a fast suite: a declaration error, not a slow suite.
+    expect(overBudget(suite('wall_seconds: 5, budget_seconds: 20'))).toBe(false)
+    // Effective wall above the BOARD budget even though inside the declared one.
+    expect(overBudget(suite('wall_seconds: 18, budget_seconds: 20'))).toBe(true)
+    // Refused for another reason only (typecheck): not over budget.
+    expect(overBudget(validation({ typecheck: 'errors' }))).toBe(false)
+    // A wider board budget clears it.
+    expect(overBudget(suite('wall_seconds: 18, budget_seconds: 20'), new ValidationContract({ budgetSeconds: 20 }))).toBeUndefined()
+  })
+})
+
+// ── comp-50 R2: the board's suite budget as a value object ────────────────
+import { SuiteBudget } from '../src/contracts.ts'
+import { INITIAL_GLOBAL, globalSchema } from '../src/spec.ts'
+import { ScrumError } from '../src/service.ts'
+
+describe('SuiteBudget (comp-50 R2)', () => {
+  it('R2: fromGlobal — absent record means the default 15s; a record means the board, flagged when above default', () => {
+    expect(SuiteBudget.fromGlobal(INITIAL_GLOBAL)).toEqual({ seconds: 15, source: 'default', aboveDefault: false })
+    const twelve = SuiteBudget.fromGlobal({ ...INITIAL_GLOBAL, suiteBudget: { seconds: 12, setAt: '2026-09-02T10:00:00.000Z' } })
+    expect(twelve).toMatchObject({ seconds: 12, source: 'board', setAt: '2026-09-02T10:00:00.000Z', aboveDefault: false })
+    expect(twelve.reason).toBeUndefined()
+    const twenty = SuiteBudget.fromGlobal({ ...INITIAL_GLOBAL, suiteBudget: { seconds: 20, setAt: '2026-09-02T10:00:00.000Z', reason: 'slow CI' } })
+    expect(twenty).toMatchObject({ seconds: 20, source: 'board', aboveDefault: true, reason: 'slow CI' })
+  })
+
+  it('R2: validate — seconds must be a number > 0', () => {
+    for (const bad of [0, -1, Number.NaN, Number.POSITIVE_INFINITY]) {
+      expect(() => SuiteBudget.validate(bad)).toThrow(ScrumError)
+      expect(() => SuiteBudget.validate(bad)).toThrow(/suite budget must be a number > 0/)
+    }
+    expect(SuiteBudget.validate(10)).toMatchObject({ seconds: 10 })
+    expect(SuiteBudget.validate(10).setAt).toMatch(/^\d{4}-\d{2}-\d{2}T/)
+  })
+
+  it('R2: validate — above the default a reason is required (also when re-setting the same value); at or below it is ignored', () => {
+    expect(() => SuiteBudget.validate(20)).toThrow(/raising the suite budget above 15s requires a reason/)
+    expect(() => SuiteBudget.validate(20, '   ')).toThrow(/requires a reason/)
+    expect(SuiteBudget.validate(20, 'slow CI')).toMatchObject({ seconds: 20, reason: 'slow CI' })
+    // 15 explicit and below: no reason needed, and a given one is never stored.
+    expect(SuiteBudget.validate(15)).not.toHaveProperty('reason')
+    expect(SuiteBudget.validate(12, 'ignored')).not.toHaveProperty('reason')
+  })
+
+  it('R2: the global schema accepts legacy media without the field and refuses a malformed record', () => {
+    expect(globalSchema.parse(INITIAL_GLOBAL).suiteBudget).toBeUndefined()
+    expect(globalSchema.parse({ ...INITIAL_GLOBAL, suiteBudget: { seconds: 12, setAt: 'x' } }).suiteBudget).toEqual({ seconds: 12, setAt: 'x' })
+    expect(globalSchema.safeParse({ ...INITIAL_GLOBAL, suiteBudget: { seconds: 0, setAt: 'x' } }).success).toBe(false)
+    expect(globalSchema.safeParse({ ...INITIAL_GLOBAL, suiteBudget: null }).success).toBe(false)
+  })
+})
