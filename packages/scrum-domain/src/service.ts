@@ -20,6 +20,8 @@ import { boardNameOf } from './boards.ts'
 import { ScrumError } from './error.ts'
 import { ReviewContract, SuiteBudget, ValidationContract } from './contracts.ts'
 import type { ContractResult, ReviewMeta, ValidationResult } from './contracts.ts'
+import { TASK_KINDS, splitKindPrefix, taskNumber } from './kind.ts'
+import type { TaskKind } from './kind.ts'
 import {
   BOARD_COLUMNS,
   COMPONENT_PHASES,
@@ -96,9 +98,12 @@ export interface CreateComponentInput {
 /** Input to {@link ScrumService.createTask}. */
 export interface CreateTaskInput {
   componentId: string
+  /** A leading `[test]`/`[code]` sets the kind when `kind` is omitted; it never reaches the stored title. */
   title: string
   description?: string
   estimate?: number
+  /** Task kind (v0.16): `test | code | other`; narrowed in the Model (`invalid-kind`). Default: inferred from the title, else `other`. */
+  kind?: string
 }
 
 /** Editable fields of any node, applied by {@link ScrumBoard.updateItem}. */
@@ -106,6 +111,8 @@ export interface UpdateItemInput {
   title?: string
   description?: string
   estimate?: number
+  /** Tasks only (v0.16): the kind; a title prefix that contradicts it is refused (`kind-conflict`). */
+  kind?: string
   targetDate?: string
   status?: string
   goal?: string
@@ -345,12 +352,16 @@ export class ScrumBoard {
    */
   async createTask(input: CreateTaskInput): Promise<Task> {
     this.mustGetLive('components', input.componentId)
+    // Kind and title are resolved BEFORE the id is allocated (comp-45 P2):
+    // a refused input never burns a counter value.
+    const resolved = this.resolveTaskKind(input.title, input.kind, undefined, input.componentId)
     const id = await this.nextId('task', 'task')
     const now = this.now()
     const task: Task = {
       id,
       componentId: input.componentId,
-      title: this.requireTitle(input.title),
+      title: resolved.title,
+      kind: resolved.kind,
       ...input.description === undefined ? {} : { description: input.description },
       ...input.estimate === undefined ? {} : { estimate: input.estimate },
       status: 'backlog',
@@ -552,10 +563,14 @@ export class ScrumBoard {
       })
     }
     if (id.startsWith('task-')) {
-      this.mustGetLive('tasks', id)
+      const live = this.mustGetLive('tasks', id)
+      // Title and kind go through the one precedence rule (comp-45 R2); a
+      // refusal throws here, before the mutator, and leaves the record intact.
+      const resolved = this.resolveTaskKind(patch.title, patch.kind, live.kind, id)
       return this.domain.table('tasks').update(id, current => ({
         ...current,
-        ...patch.title === undefined ? {} : { title: this.requireTitle(patch.title) },
+        ...resolved.title === undefined ? {} : { title: resolved.title },
+        kind: resolved.kind,
         ...patch.description === undefined ? {} : { description: patch.description },
         ...patch.estimate === undefined ? {} : { estimate: patch.estimate },
         ...stamp,
@@ -664,8 +679,22 @@ export class ScrumBoard {
       case 'design':
         return filled(component.design) ? null : 'design is empty'
       case 'tdd': {
+        // comp-45 R3: tests before code. (a) alone excludes (b)/(c); without
+        // any test task every code task counts as early, so (b) and (c) come
+        // together. Creation order is the id NUMBER (createdAt can tie).
         const tasks = this.tasksOf(component.id)
-        return tasks.length > 0 ? null : 'no task under the component (decompose first)'
+        if (tasks.length === 0) return 'no task under the component (decompose first)'
+        const reasons: string[] = []
+        const tests = tasks.filter(t => t.kind === 'test')
+        const firstTest = tests.length === 0 ? Infinity : Math.min(...tests.map(t => taskNumber(t.id)))
+        if (tests.length === 0) reasons.push('no test task (kind test) — write the tests first')
+        const early = tasks
+          .filter(t => t.kind === 'code' && taskNumber(t.id) < firstTest)
+          .sort((a, b) => taskNumber(a.id) - taskNumber(b.id))
+        if (early.length > 0) {
+          reasons.push(`code task(s) created before the first test task (${early.map(t => t.id).join(', ')}) — change their kind or trash them`)
+        }
+        return reasons.length === 0 ? null : reasons.join('; ')
       }
       case 'construction': {
         const tasks = this.tasksOf(component.id)
@@ -1335,6 +1364,47 @@ export class ScrumBoard {
       throw new ScrumError('invalid-status', `'${value}' is not a valid status for '${id}' (${allowed.join(', ')})`)
     }
     return value as S
+  }
+
+  /**
+   * @param value - a kind as the caller sent it (tools and the API hand strings).
+   * @param where - what the message names: the parent component on creation, the task id on update.
+   * @returns `value` narrowed to {@link TASK_KINDS} or throws `invalid-kind` (the empty string included).
+   */
+  private narrowKind(value: string, where: string): TaskKind {
+    if (!(TASK_KINDS as readonly string[]).includes(value)) {
+      const target = where.startsWith('task-') ? `'${where}'` : `a task under ${where}`
+      throw new ScrumError('invalid-kind', `'${value}' is not a task kind for ${target} (${TASK_KINDS.join(', ')})`)
+    }
+    return value as TaskKind
+  }
+
+  /**
+   * The ONE precedence rule for a task's title and kind (comp-45 R2), shared
+   * by `createTask` (no current kind) and `updateItem` (the stored kind):
+   * `narrowKind` → `splitKindPrefix` → prefix-only refused → contradicting
+   * prefix refused → `requireTitle`. The prefix never reaches the stored
+   * title; without an explicit kind it sets the kind; without either, the
+   * current kind stays (or `other` on creation).
+   * @param title - the incoming title, when any.
+   * @param kind - the incoming kind, when any.
+   * @param current - the stored kind (update) or undefined (creation).
+   * @param where - what refusals name (component id on creation, task id on update).
+   * @returns the resolved kind, plus the cleaned title whenever one came in.
+   */
+  private resolveTaskKind(title: string, kind: string | undefined, current: TaskKind | undefined, where: string): { title: string; kind: TaskKind }
+  private resolveTaskKind(title: string | undefined, kind: string | undefined, current: TaskKind | undefined, where: string): { title?: string; kind: TaskKind }
+  private resolveTaskKind(title: string | undefined, kind: string | undefined, current: TaskKind | undefined, where: string): { title?: string; kind: TaskKind } {
+    const explicit = kind === undefined ? undefined : this.narrowKind(kind, where)
+    if (title === undefined) return { kind: explicit ?? current ?? 'other' }
+    const split = splitKindPrefix(title)
+    if (split.prefixOnly) {
+      throw new ScrumError('invalid-input', `title is only a kind prefix — add a title after [${split.matched}]`)
+    }
+    if (explicit !== undefined && split.matched !== undefined && split.matched !== explicit) {
+      throw new ScrumError('kind-conflict', `title prefix [${split.matched}] contradicts kind ${explicit} — drop one`)
+    }
+    return { title: this.requireTitle(split.title), kind: explicit ?? split.matched ?? current ?? 'other' }
   }
 
   /**

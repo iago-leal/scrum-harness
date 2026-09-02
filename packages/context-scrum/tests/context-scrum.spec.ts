@@ -94,6 +94,23 @@ describe('renderSprintContext', () => {
     expect(first).toContain('comp-1 [proposed]')
     expect(first).toContain('Disciplina do board')
   })
+
+  it('R4 (comp-45): prints the task kind as a prefix before the quoted title, nothing for other', async () => {
+    const cwd = join(root, 'kinds')
+    const board = await ctx.scrum.board(cwd)
+    const release = await board.createRelease({ name: 'v1.0' })
+    const feature = await board.createFeature({ releaseId: release.id, title: 'Login' })
+    const component = await board.createComponent({ featureId: feature.id, title: 'OAuth' })
+    const test = await board.createTask({ componentId: component.id, title: '[test] Gate red', estimate: 2 })
+    const code = await board.createTask({ componentId: component.id, title: 'Gate green', kind: 'code' })
+    const other = await board.createTask({ componentId: component.id, title: 'Docs' })
+    const sprint = await board.planSprint({ goal: 'g', taskIds: [test.id, code.id, other.id] })
+    await board.startSprint(sprint.id)
+    const text = renderSprintContext(board)!
+    expect(text).toContain('task-1 [test] "Gate red" (2pt)')
+    expect(text).toContain('task-2 [code] "Gate green"')
+    expect(text).toContain('task-3 "Docs"')
+  })
 })
 
 describe('pre-step listener', () => {

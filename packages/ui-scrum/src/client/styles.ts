@@ -68,6 +68,14 @@ export const SCRUM_CSS = `
   border-radius: var(--borderRadius-full, 5px); padding: 1px 7px;
   white-space: nowrap;
 }
+/* Task kind chip (comp-45): test = accent, code = success; kind other renders nothing. */
+.scrum-kind {
+  font-family: var(--fontStack-monospace, ui-monospace, monospace); font-size: 11px; font-weight: 600;
+  border-radius: var(--borderRadius-full, 10px); padding: 0 6px; line-height: 16px;
+  white-space: nowrap; flex: none;
+}
+.scrum-kind-test { color: var(--fgColor-accent, #0969da); background: var(--bgColor-accent-muted, #ddf4ff); }
+.scrum-kind-code { color: var(--fgColor-success, #1a7f37); background: var(--bgColor-success-muted, #dafbe1); }
 .scrum-muted { color: var(--fgColor-muted, #6b7280); font-size: 12px; }
 .scrum-empty { color: var(--fgColor-muted, #6b7280); padding: 26px; text-align: center; }
 .scrum-section-head {

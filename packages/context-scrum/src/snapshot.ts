@@ -7,7 +7,7 @@
  * @module @scrum-harness/context-scrum/snapshot
  */
 
-import { BOARD_COLUMNS } from '@scrum-harness/domain'
+import { BOARD_COLUMNS, kindPrefix } from '@scrum-harness/domain'
 import type { ScrumBoard, Task } from '@scrum-harness/domain'
 
 /** Column captions used in the snapshot (short, id-first). */
@@ -23,10 +23,10 @@ function shorten(title: string, max = 64): string {
   return title.length <= max ? title : `${title.slice(0, max - 1)}…`
 }
 
-/** Render one task entry: `task-7 "Título" (3pt)`. */
+/** Render one task entry: `task-7 [test] "Título" (3pt)` (the kind prefix is the View's, comp-45 R4). */
 function taskEntry(task: Task): string {
   const points = task.estimate === undefined ? '' : ` (${task.estimate}pt)`
-  return `${task.id} "${shorten(task.title)}"${points}`
+  return `${task.id} ${kindPrefix(task)}"${shorten(task.title)}"${points}`
 }
 
 /**

@@ -354,7 +354,8 @@ describe('suite budget tools (comp-50)', () => {
 
     const slow = await run('scrum_item_update', { id: 'comp-1', validation: evidence('wall_seconds: 16, budget_seconds: 15') })
     expect(slow.text).toMatch(/validation contract: .*wall_seconds 16 > budget_seconds 15/)
-    expect(slow.text).toMatch(/over budget: add a test-refactor task before done/)
+    // comp-45 R4: the advice names the task kind.
+    expect(slow.text).toMatch(/over budget: add a test task \(kind test\) refactoring the suite before done/)
     expect(slow.text).not.toMatch(/budget above default/)
 
     // A declaration error (budget above the board) is not a slow suite: no refactor advice.
@@ -371,5 +372,74 @@ describe('suite budget tools (comp-50)', () => {
     // Patches that do not touch the validation stay quiet about budgets.
     const title = await run('scrum_item_update', { id: 'comp-1', title: 'C2' })
     expect(title.text).not.toMatch(/budget/)
+  })
+})
+
+// ── comp-45 R4/R5: task kind through the tools — written before the code ──
+
+describe('task kind tools (comp-45)', () => {
+  async function seed(): Promise<void> {
+    await run('scrum_release_create', { name: 'v1.0' })
+    await run('scrum_feature_create', { releaseId: 'rel-1', title: 'F' })
+    await run('scrum_component_create', { featureId: 'feat-1', title: 'C' })
+  }
+
+  it('R5: scrum_task_create and scrum_item_update expose kind as an enum; the descriptions state the rule', () => {
+    const schemas = ctx.tools.schemas()
+    const create = schemas.find(s => s.name === 'scrum_task_create')!
+    const update = schemas.find(s => s.name === 'scrum_item_update')!
+    const phase = schemas.find(s => s.name === 'scrum_component_phase')!
+    const props = (schema: typeof create) => (schema.parameters as { properties: Record<string, { enum?: string[]; description?: string }> }).properties
+    expect(props(create)['kind']?.enum).toEqual(['test', 'code', 'other'])
+    expect(props(create)['kind']?.description).toMatch(/inferred from a leading \[test\]\/\[code\]/)
+    expect(props(create)['kind']?.description).toMatch(/test tasks must be created before code tasks/)
+    expect(props(update)['kind']?.enum).toEqual(['test', 'code', 'other'])
+    expect(phase.description).toMatch(/tdd→construction needs at least one test task and no code task created before the first test task/)
+  })
+
+  it('R4/R5: creates with an explicit or inferred kind and answers in the family format with the View prefix', async () => {
+    await seed()
+    const explicit = await run('scrum_task_create', { componentId: 'comp-1', title: 'Gate tdd', kind: 'test', estimate: 2 })
+    expect(explicit.text).toBe('Created task task-1 [test] "Gate tdd" (2pt) under comp-1.')
+    const inferred = await run('scrum_task_create', { componentId: 'comp-1', title: '[code] Gate tdd' })
+    expect(inferred.text).toBe('Created task task-2 [code] "Gate tdd" under comp-1.')
+    const plain = await run('scrum_task_create', { componentId: 'comp-1', title: 'Docs' })
+    expect(plain.text).toBe('Created task task-3 "Docs" under comp-1.')
+    const tree = await run('scrum_tree', {})
+    expect(tree.text).toMatch(/task-1 \[test\] Gate tdd \[backlog\] \(2pt\)/)
+    expect(tree.text).toMatch(/task-2 \[code\] Gate tdd \[backlog\]/)
+    expect(tree.text).toMatch(/task-3 Docs \[backlog\]/)
+  })
+
+  it('R5: kind-conflict and prefix-only titles come back as named tool errors; scrum_item_update changes the kind', async () => {
+    await seed()
+    const conflict = await run('scrum_task_create', { componentId: 'comp-1', title: '[test] X', kind: 'code' })
+    expect(conflict.isError).toBe(true)
+    expect(conflict.text).toMatch(/title prefix \[test\] contradicts kind code — drop one/)
+    const prefixOnly = await run('scrum_task_create', { componentId: 'comp-1', title: '[test]' })
+    expect(prefixOnly.isError).toBe(true)
+    expect(prefixOnly.text).toMatch(/only a kind prefix/)
+
+    await run('scrum_task_create', { componentId: 'comp-1', title: '[code] early' })
+    const changed = await run('scrum_item_update', { id: 'task-1', kind: 'other' })
+    expect(changed.isError).toBe(false)
+    expect((await run('scrum_tree', {})).text).toMatch(/task-1 early \[backlog\]/)
+    const renamed = await run('scrum_item_update', { id: 'task-1', title: '[test] early' })
+    expect(renamed.isError).toBe(false)
+    expect((await run('scrum_tree', {})).text).toMatch(/task-1 \[test\] early \[backlog\]/)
+  })
+
+  it('R3/R5: the tdd gate refusal names the tests-first rule through scrum_component_phase', async () => {
+    await seed()
+    await run('scrum_item_update', { id: 'comp-1', requirements: CONTRACT_REQ, requirementsReview: CONTRACT_REVIEW })
+    await run('scrum_component_phase', { id: 'comp-1', action: 'advance' })
+    await run('scrum_item_update', { id: 'comp-1', design: 'D' })
+    await run('scrum_component_phase', { id: 'comp-1', action: 'advance' })
+    await run('scrum_task_create', { componentId: 'comp-1', title: '[code] too early' })
+    const refused = await run('scrum_component_phase', { id: 'comp-1', action: 'advance' })
+    expect(refused.isError).toBe(true)
+    expect(refused.text).toMatch(/no test task \(kind test\) — write the tests first; code task\(s\) created before the first test task \(task-1\)/)
+    await run('scrum_item_update', { id: 'task-1', kind: 'test' })
+    expect((await run('scrum_component_phase', { id: 'comp-1', action: 'advance' })).text).toContain('construction')
   })
 })

@@ -161,3 +161,66 @@ describe('formatSuiteBudget (comp-50 R3)', () => {
     expect(formatSuiteBudget(twenty, 'header')).toBe('Suite budget: 20s (board — above default 15s: slow CI)')
   })
 })
+
+// ── comp-45 R4: the kind prefix as a View concern — written before the code ──
+import { formatShelf, formatSprintStatus, kindPrefix } from '../src/format.ts'
+import type { Task } from '../src/spec.ts'
+
+function task(fields: Partial<Task>): Task {
+  return {
+    id: 'task-1', componentId: 'comp-7', title: 'Testes do gate', kind: 'other', status: 'backlog', order: 0,
+    createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z', ...fields,
+  }
+}
+
+describe('kind prefix (comp-45 R4)', () => {
+  it('R4: kindPrefix renders [test] / [code] with a trailing space and nothing for other', () => {
+    expect(kindPrefix({ kind: 'test' })).toBe('[test] ')
+    expect(kindPrefix({ kind: 'code' })).toBe('[code] ')
+    expect(kindPrefix({ kind: 'other' })).toBe('')
+  })
+
+  it('R4: the tree line puts the prefix back in front of the title — identical to the pre-v0.16 rendering', () => {
+    const tree: ScrumTree = {
+      releases: [{
+        id: 'rel-1', name: 'R', status: 'active', order: 0, createdAt: '', updatedAt: '',
+        features: [{
+          id: 'feat-1', releaseId: 'rel-1', title: 'F', status: 'in_progress', order: 0, createdAt: '', updatedAt: '',
+          components: [{
+            ...component({}),
+            readyForDone: false,
+            tasks: [
+              task({ id: 'task-75', kind: 'test', title: 'Testes de domínio do motor (R8)', status: 'done', sprintId: 'spr-11', estimate: 3 }),
+              task({ id: 'task-76', kind: 'code', title: 'spec.ts + service.ts', status: 'done', sprintId: 'spr-11', estimate: 3 }),
+              task({ id: 'task-79', kind: 'other', title: 'Validação: suite cronometrada', status: 'done', sprintId: 'spr-11', estimate: 1 }),
+            ],
+          }],
+        }],
+      }],
+    }
+    const text = formatTree(tree)
+    expect(text).toMatch(/^      task-75 \[test\] Testes de domínio do motor \(R8\) \[done @spr-11\] \(3pt\)$/m)
+    expect(text).toMatch(/^      task-76 \[code\] spec\.ts \+ service\.ts \[done @spr-11\] \(3pt\)$/m)
+    expect(text).toMatch(/^      task-79 Validação: suite cronometrada \[done @spr-11\] \(1pt\)$/m)
+  })
+
+  it('R4: the sprint board and the shelves carry the prefix too', () => {
+    const sprint = {
+      id: 'spr-1', number: 1, goal: 'g', status: 'active' as const, releaseIds: [], createdAt: '', updatedAt: '',
+    }
+    const status = {
+      sprint,
+      tasks: [task({ id: 'task-1', kind: 'test', title: 'red first', status: 'in_progress' }), task({ id: 'task-2', kind: 'other', title: 'docs', status: 'todo' })],
+      totals: { tasks: 2, done: 0, points: 0, pointsDone: 0 },
+    }
+    const board = formatSprintStatus(status)
+    expect(board).toMatch(/in_progress: task-1 \[test\] red first/)
+    expect(board).toMatch(/todo: task-2 docs/)
+
+    const shelf = formatShelf({
+      releases: [], features: [], components: [],
+      tasks: [task({ id: 'task-3', kind: 'code', title: 'gone', status: 'backlog', deletedAt: '2026-01-02T00:00:00.000Z', estimate: 2 })],
+    }, 'trash')
+    expect(shelf).toMatch(/^task-3 \[code\] gone \[task backlog, of comp-7\] \(2pt\) 2026-01-02T00:00:00\.000Z$/m)
+  })
+})

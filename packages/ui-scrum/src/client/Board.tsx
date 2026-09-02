@@ -12,9 +12,9 @@
 
 import { useState } from 'react'
 import { COLUMN_LABELS, COLUMNS, COMPONENT_FLOW, FEATURE_FLOW } from './api.ts'
-import type { ScrumState, WireTask } from './api.ts'
+import type { ScrumState, WireTask, WireTaskKind } from './api.ts'
 import type { BoardLevel } from './store.ts'
-import { aggOf, Rollup, STATUS_META } from './meta.tsx'
+import { aggOf, KindChip, Rollup, STATUS_META } from './meta.tsx'
 import type { Agg } from './meta.tsx'
 
 /** Callbacks the board drives. */
@@ -49,6 +49,8 @@ interface BoardItem {
   crumb: string
   /** Optional estimate chip (tasks). */
   estimate?: number
+  /** Task kind chip (tasks; `kind` here would collide with the level vocabulary — comp-45 L3). */
+  taskKind?: WireTaskKind
   /** Optional descendant-task rollup (parent levels). */
   agg?: Agg
 }
@@ -182,6 +184,7 @@ function Kanban(props: {
                 >{item.title}</button>
                 <div className="scrum-card-meta">
                   <span className="scrum-id">{item.id}</span>
+                  <KindChip kind={item.taskKind} />
                   {item.estimate !== undefined && <span className="scrum-pts">{item.estimate}pt</span>}
                   {item.agg !== undefined && <Rollup agg={item.agg} />}
                   <span style={{ flex: 1 }} />
@@ -344,6 +347,7 @@ export function Board(props: { state: ScrumState; callbacks: BoardCallbacks; ui:
     status: task.status,
     crumb: crumbs.get(task.componentId) ?? task.componentId,
     estimate: task.estimate,
+    taskKind: task.kind,
   }))
   /** Linked releases of the active sprint (id + name when still live). */
   const linkedReleases = active.releaseIds.map((id) => {

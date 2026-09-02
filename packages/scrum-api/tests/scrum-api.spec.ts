@@ -265,4 +265,40 @@ describe('scrum-api', () => {
     const current = await state()
     expect(current.state.tree.releases[0].features[0].components[0].readyForDone).toBe(false)
   })
+
+  // ── comp-45 R5: task kind over the wire — written before the code ──
+
+  it('R5: createTask/updateItem accept kind (400 on transport, 409 with the Model code on conflict); the shelf carries taskKind', async () => {
+    await act({ action: 'createRelease', name: 'v1.0' })
+    await act({ action: 'createFeature', releaseId: 'rel-1', title: 'F' })
+    await act({ action: 'createComponent', featureId: 'feat-1', title: 'C' })
+
+    const explicit = await act({ action: 'createTask', componentId: 'comp-1', title: 'Gate', kind: 'test' })
+    expect(explicit.status).toBe(200)
+    expect(explicit.json.result).toMatchObject({ id: 'task-1', kind: 'test', title: 'Gate' })
+    const inferred = await act({ action: 'createTask', componentId: 'comp-1', title: '[code] Gate' })
+    expect(inferred.json.result).toMatchObject({ id: 'task-2', kind: 'code', title: 'Gate' })
+    // The tree carries kind on every task (the GUI chips read it).
+    const tasks = (await state()).state.tree.releases[0].features[0].components[0].tasks
+    expect(tasks.map((t: { kind: string }) => t.kind)).toEqual(['test', 'code'])
+
+    const transport = await act({ action: 'createTask', componentId: 'comp-1', title: 'x', kind: 'spike' })
+    expect(transport.status).toBe(400)
+    const conflict = await act({ action: 'createTask', componentId: 'comp-1', title: '[test] x', kind: 'code' })
+    expect(conflict.status).toBe(409)
+    expect(conflict.json.code).toBe('kind-conflict')
+    const prefixOnly = await act({ action: 'createTask', componentId: 'comp-1', title: '[test]' })
+    expect(prefixOnly.status).toBe(409)
+    expect(prefixOnly.json.code).toBe('invalid-input')
+
+    const changed = await act({ action: 'updateItem', id: 'task-2', kind: 'other' })
+    expect(changed.json.result).toMatchObject({ id: 'task-2', kind: 'other' })
+    const badUpdate = await act({ action: 'updateItem', id: 'task-2', kind: '' })
+    expect(badUpdate.status).toBe(400)
+
+    await act({ action: 'deleteItem', id: 'task-1' })
+    const trashed = (await state()).state.trash
+    // `kind` stays the LEVEL on shelf items; the task kind travels as taskKind.
+    expect(trashed).toMatchObject([{ id: 'task-1', kind: 'task', taskKind: 'test', title: 'Gate' }])
+  })
 })

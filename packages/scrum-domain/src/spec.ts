@@ -8,6 +8,7 @@
 
 import { z } from 'zod'
 import { defineDomain, domainTable } from '@deepseek-ai/dsh-storage-domain'
+import { TASK_KINDS, splitKindPrefix } from './kind.ts'
 
 /** Lifecycle of a Release. */
 export const RELEASE_STATUSES = ['planned', 'active', 'released'] as const
@@ -132,6 +133,12 @@ export const taskSchema = z.object({
   componentId: z.string(),
   title: z.string().min(1),
   description: z.string().optional(),
+  /**
+   * Task kind (v0.16, comp-45). Optional on input so pre-v0.16 media loads;
+   * the transform below derives it from a `[test]`/`[code]` title prefix
+   * (and strips the prefix — the View renders it back). No version bump.
+   */
+  kind: z.enum(TASK_KINDS).optional(),
   /** Story points (or any relative estimation unit the team uses). */
   estimate: z.number().nonnegative().optional(),
   status: z.enum(TASK_STATUSES),
@@ -147,6 +154,13 @@ export const taskSchema = z.object({
   createdAt: isoDate,
   updatedAt: isoDate,
   ...shelfFields,
+}).transform(({ kind, title, ...rest }) => {
+  // Canonical media carries `kind`; a legacy record derives it from the title
+  // prefix through the same total function the service uses (idempotent: the
+  // second parse finds `kind` and keeps the title as is).
+  if (kind !== undefined) return { ...rest, title, kind }
+  const split = splitKindPrefix(title)
+  return { ...rest, title: split.title, kind: split.kind }
 })
 export type Task = z.infer<typeof taskSchema>
 

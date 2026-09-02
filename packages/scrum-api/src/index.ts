@@ -17,7 +17,7 @@ import type { Context } from '@deepseek-ai/cordis'
 import { z } from 'zod'
 // Type-only: resolves ctx.webServer for the inject declaration.
 import type {} from '@deepseek-ai/dsh-host-webserver'
-import { BOARD_COLUMNS, CEREMONY_TYPES, COMPONENT_PHASES, ScrumError } from '@scrum-harness/domain'
+import { BOARD_COLUMNS, CEREMONY_TYPES, COMPONENT_PHASES, ScrumError, TASK_KINDS } from '@scrum-harness/domain'
 // Type-only: resolves ctx.scrum.
 import type { ScrumBoard, ShelfLists } from '@scrum-harness/domain'
 
@@ -32,8 +32,9 @@ const actionSchema = z.discriminatedUnion('action', [
   z.object({ action: z.literal('createRelease'), name: z.string().min(1), description: z.string().optional(), targetDate: z.string().optional() }),
   z.object({ action: z.literal('createFeature'), releaseId: z.string(), title: z.string().min(1), description: z.string().optional() }),
   z.object({ action: z.literal('createComponent'), featureId: z.string(), title: z.string().min(1), description: z.string().optional() }),
-  z.object({ action: z.literal('createTask'), componentId: z.string(), title: z.string().min(1), description: z.string().optional(), estimate: z.number().nonnegative().optional() }),
-  z.object({ action: z.literal('updateItem'), id: z.string(), title: z.string().optional(), description: z.string().optional(), estimate: z.number().nonnegative().optional(), targetDate: z.string().optional(), status: z.string().optional(), goal: z.string().optional(), releaseId: z.string().optional(), releaseIds: z.array(z.string()).optional(), wipLimits: z.record(z.string(), z.number()).optional(), requirements: z.string().optional(), requirementsReview: z.string().optional(), design: z.string().optional(), validation: z.string().optional() }),
+  // v0.16 (comp-45): `kind` is transport-validated here (400); the Model owns inference, conflict and the tdd gate (409).
+  z.object({ action: z.literal('createTask'), componentId: z.string(), title: z.string().min(1), description: z.string().optional(), estimate: z.number().nonnegative().optional(), kind: z.enum(TASK_KINDS).optional() }),
+  z.object({ action: z.literal('updateItem'), id: z.string(), title: z.string().optional(), description: z.string().optional(), estimate: z.number().nonnegative().optional(), kind: z.enum(TASK_KINDS).optional(), targetDate: z.string().optional(), status: z.string().optional(), goal: z.string().optional(), releaseId: z.string().optional(), releaseIds: z.array(z.string()).optional(), wipLimits: z.record(z.string(), z.number()).optional(), requirements: z.string().optional(), requirementsReview: z.string().optional(), design: z.string().optional(), validation: z.string().optional() }),
   // v0.12: the spiral — `op` (not `action`, the envelope discriminator) picks advance | set.
   z.object({ action: z.literal('componentPhase'), id: z.string(), op: z.enum(['advance', 'set']), phase: z.enum(COMPONENT_PHASES).optional() }),
   z.object({ action: z.literal('deleteItem'), id: z.string(), cascade: z.boolean().optional() }),
@@ -68,8 +69,9 @@ export function apply(ctx: Context): void {
     ...lists.releases.map(r => ({ id: r.id, kind: 'release' as const, title: r.name, at: r[field] ?? '', status: r.status })),
     ...lists.features.map(f => ({ id: f.id, kind: 'feature' as const, title: f.title, parentId: f.releaseId, at: f[field] ?? '', status: f.status })),
     ...lists.components.map(c => ({ id: c.id, kind: 'component' as const, title: c.title, parentId: c.featureId, at: c[field] ?? '', status: c.status })),
+    // `kind` is the LEVEL on shelf items; the task kind travels as `taskKind` (comp-45 R6/L3).
     ...lists.tasks.map(t => ({
-      id: t.id, kind: 'task' as const, title: t.title, parentId: t.componentId, at: t[field] ?? '',
+      id: t.id, kind: 'task' as const, taskKind: t.kind, title: t.title, parentId: t.componentId, at: t[field] ?? '',
       status: t.status, ...t.estimate === undefined ? {} : { estimate: t.estimate },
     })),
   ].sort((a, b) => b.at.localeCompare(a.at))

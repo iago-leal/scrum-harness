@@ -61,6 +61,15 @@ export function TypeIcon(props: { kind: keyof typeof KIND_META }) {
   )
 }
 
+/**
+ * Task-kind chip (comp-45 R6): `test` in accent, `code` in success, nothing
+ * for `other` — the GUI twin of the text views' `[test] ` prefix.
+ */
+export function KindChip(props: { kind: 'test' | 'code' | 'other' | undefined }) {
+  if (props.kind === undefined || props.kind === 'other') return null
+  return <span className={`scrum-kind scrum-kind-${props.kind}`} title="Tipo da tarefa">{props.kind}</span>
+}
+
 /** Colored state dot + label (unknown statuses degrade to a grey dot). */
 export function StateDot(props: { status: string }) {
   const meta = STATUS_META[props.status] ?? { label: props.status, color: NEUTRAL }

@@ -5,6 +5,9 @@
  * @module @scrum-harness/ui/client/api
  */
 
+/** Task kind (v0.16, comp-45): the domain's `test | code | other`. */
+export type WireTaskKind = 'test' | 'code' | 'other'
+
 /** One task on the wire. */
 export interface WireTask {
   id: string
@@ -12,6 +15,8 @@ export interface WireTask {
   title: string
   description?: string
   estimate?: number
+  /** Always present on the wire (the Model migrates legacy media on parse). */
+  kind: WireTaskKind
   status: 'backlog' | 'todo' | 'in_progress' | 'review' | 'done'
   /** When the task last entered done (burndown stamp, v0.6+). */
   doneAt?: string
@@ -90,7 +95,10 @@ export interface WireCeremony {
 /** One shelved (trashed or archived) item, flattened for listing. */
 export interface WireShelfItem {
   id: string
+  /** The LEVEL of the item (not the task kind — that is `taskKind`). */
   kind: 'release' | 'feature' | 'component' | 'task'
+  /** Task rows only: the task kind (comp-45). */
+  taskKind?: WireTaskKind
   title: string
   /** Parent id, absent for releases. */
   parentId?: string

@@ -8,9 +8,12 @@
  */
 
 import { useEffect, useState } from 'react'
-import type { ScrumState } from './api.ts'
+import type { ScrumState, WireTaskKind } from './api.ts'
 import { COMPONENT_FLOW, FEATURE_FLOW } from './api.ts'
 import { KIND_META, StateDot, TypeIcon } from './meta.tsx'
+
+/** The three task kinds, in the order the form offers them. */
+const TASK_KINDS: readonly WireTaskKind[] = ['test', 'code', 'other']
 
 /** The selected item, normalized across the four kinds. */
 export interface DetailsNode {
@@ -23,6 +26,8 @@ export interface DetailsNode {
   /** Editable status choices; absent when status is not editable here. */
   statusOptions?: string[]
   estimate?: number
+  /** Tasks only: the task kind (named apart from `kind`, the level — comp-45 L3). */
+  taskKind?: WireTaskKind
   targetDate?: string
   sprintId?: string
   /** Ancestor path, e.g. "v0.3 › Grade do backlog". */
@@ -64,7 +69,7 @@ export function resolveNode(state: ScrumState, id: string): DetailsNode | null {
           if (task.id === id) {
             return {
               id, kind: 'task', title: task.title, description: task.description,
-              status: task.status, estimate: task.estimate, sprintId: task.sprintId,
+              status: task.status, estimate: task.estimate, taskKind: task.kind, sprintId: task.sprintId,
               crumb: `${feature.title} › ${component.title}`,
             }
           }
@@ -159,6 +164,19 @@ export function WorkItemForm(props: {
                 onChange={(e) => { props.run({ action: 'updateItem', id: node.id, status: e.target.value }) }}
               >
                 {node.statusOptions.map(option => <option key={option} value={option}>{option}</option>)}
+              </select>
+            </label>
+          )}
+
+          {node.kind === 'task' && node.taskKind !== undefined && (
+            <label className="scrum-field">
+              <span>Tipo</span>
+              <select
+                value={node.taskKind}
+                title="test = escreve/prova testes; code = faz os testes passarem; other = validação, spike, docs"
+                onChange={(e) => { props.run({ action: 'updateItem', id: node.id, kind: e.target.value }) }}
+              >
+                {TASK_KINDS.map(option => <option key={option} value={option}>{option}</option>)}
               </select>
             </label>
           )}

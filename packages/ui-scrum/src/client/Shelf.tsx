@@ -8,7 +8,7 @@
 
 import type { ReactNode } from 'react'
 import type { ScrumState, WireShelfItem } from './api.ts'
-import { KIND_META, StateDot, TypeIcon } from './meta.tsx'
+import { KIND_META, KindChip, StateDot, TypeIcon } from './meta.tsx'
 
 /** Callbacks the shelf drives (mutations funnel through the panel). */
 export interface ShelfCallbacks {
@@ -32,6 +32,7 @@ function ShelfRow(props: { item: WireShelfItem; actions: ReactNode }) {
         <span className="scrum-muted">{KIND_META[item.kind].label}</span>
         <span className="scrum-id">{item.id}</span>
         <span className="scrum-title">{item.title}</span>
+        <KindChip kind={item.taskKind} />
         {item.status !== undefined && <StateDot status={item.status} />}
         {item.estimate !== undefined && <span className="scrum-pts">{item.estimate}pt</span>}
         {item.parentId !== undefined && <span className="scrum-pts" title="Item pai">↑ {item.parentId}</span>}

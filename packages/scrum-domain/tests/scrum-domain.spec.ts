@@ -4,7 +4,7 @@
  * storage-domain facility. No mocks — writes reach real JSON files.
  */
 
-import { mkdtempSync, rmSync } from 'node:fs'
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
@@ -16,7 +16,7 @@ import * as StorageMemory from '@scrum-harness/test-support/src/index.ts'
 import { ScrumService, ScrumError } from '../src/service.ts'
 import type { ScrumBoard } from '../src/service.ts'
 import { boardNameOf, GLOBAL_BOARD_NAME } from '../src/boards.ts'
-import { componentSchema, sprintSchema } from '../src/spec.ts'
+import { componentSchema, sprintSchema, taskSchema } from '../src/spec.ts'
 
 // Test infrastructure (comp-50 R5): ONE Context per file over the in-memory
 // backend (real hub + storage-domain + ScrumService; only the medium is a
@@ -612,12 +612,15 @@ async function toDesign(id: string) {
   return scrum.advancePhase(id)
 }
 
-/** Carry a component to `tdd` with one task under it. */
+/**
+ * Carry a component to `tdd` with one task under it. Since comp-45 the tdd
+ * gate wants a test task first, so the fixture task is born `[test]`.
+ */
 async function toTdd(id: string) {
   await toDesign(id)
   await scrum.updateItem(id, { design: 'erDiagram …' })
   await scrum.advancePhase(id)
-  return scrum.createTask({ componentId: id, title: 'first task' })
+  return scrum.createTask({ componentId: id, title: '[test] first task' })
 }
 
 /** Plan+start a sprint with the tasks and move them all to done. */
@@ -692,14 +695,16 @@ describe('spiral gates (R3, R4, R5)', () => {
     expect((await scrum.advancePhase(id)).phase).toBe('design')
   })
 
-  it('design → tdd needs design; tdd → construction needs at least one task', async () => {
+  it('design → tdd needs design; tdd → construction needs at least one TEST task (comp-45)', async () => {
     const id = await seedComponent()
     await toDesign(id)
     await expect(scrum.advancePhase(id)).rejects.toThrow(/design/)
     await scrum.updateItem(id, { design: 'erDiagram' })
     expect((await scrum.advancePhase(id)).phase).toBe('tdd')
-    await expect(scrum.advancePhase(id)).rejects.toThrow(/task/)
+    await expect(scrum.advancePhase(id)).rejects.toThrow(/no task under the component/)
     await scrum.createTask({ componentId: id, title: 't' })
+    await expect(scrum.advancePhase(id)).rejects.toThrow(/no test task/)
+    await scrum.createTask({ componentId: id, title: '[test] t' })
     expect((await scrum.advancePhase(id)).phase).toBe('construction')
   })
 
@@ -1024,5 +1029,307 @@ describe('suite budget (comp-50 R2)', () => {
     expect(componentOf(pending.id).readyForDone).toBe(false)
     const readiness = scrum.doneReadiness(pending.id)
     expect(!readiness.ok && readiness.reasons.join()).toMatch(/budget_seconds 15 > board budget 10/)
+  })
+})
+
+// ── comp-45: task kind + the tdd gate (R1–R3) — written before the code ───
+//
+// `kind` becomes domain data: the `[test]`/`[code]` title convention of the
+// spr-11+ boards migrates on parse (prefix out of the title, back through
+// the View), every title entry point interprets the prefix through ONE pure
+// function, and the tdd → construction gate wants tests before code.
+
+/** A raw pre-v0.16 task record (no `kind`) with the given title. */
+function legacyTask(title: string, extra: Record<string, unknown> = {}) {
+  return {
+    id: 'task-1', componentId: 'comp-1', title, status: 'backlog', order: 0,
+    createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z',
+    ...extra,
+  }
+}
+
+/** The task record as the tree currently holds it. */
+function taskOf(id: string) {
+  for (const release of scrum.tree().releases) {
+    for (const feature of release.features) {
+      for (const component of feature.components) {
+        const found = component.tasks.find(t => t.id === id)
+        if (found !== undefined) return found
+      }
+    }
+  }
+  throw new Error(`task ${id} not in tree`)
+}
+
+describe('task kind (comp-45)', () => {
+  it('R1: migrates legacy titles on parse — prefix becomes kind, title loses it, no version bump', () => {
+    expect(taskSchema.parse(legacyTask('[test] X'))).toMatchObject({ kind: 'test', title: 'X' })
+    expect(taskSchema.parse(legacyTask('[CODE] X'))).toMatchObject({ kind: 'code', title: 'X' })
+    expect(taskSchema.parse(legacyTask('plain title'))).toMatchObject({ kind: 'other', title: 'plain title' })
+    // Whitespace: leading space before the prefix (P1) and doubled space after it.
+    expect(taskSchema.parse(legacyTask('  [test] X'))).toMatchObject({ kind: 'test', title: 'X' })
+    expect(taskSchema.parse(legacyTask('[test]  X'))).toMatchObject({ kind: 'test', title: 'X' })
+    // A prefix in the middle is not a prefix.
+    expect(taskSchema.parse(legacyTask('fix [test] X'))).toMatchObject({ kind: 'other', title: 'fix [test] X' })
+  })
+
+  it('R1: the split is total — a prefix-only legacy title stays a non-empty title of kind other', () => {
+    expect(taskSchema.parse(legacyTask('[test]'))).toMatchObject({ kind: 'other', title: '[test]' })
+    expect(taskSchema.parse(legacyTask('[code]   '))).toMatchObject({ kind: 'other', title: '[code]' })
+  })
+
+  it('R1: a record that already carries kind is kept as is; the parse is idempotent', () => {
+    const explicit = legacyTask('[test] keep me', { kind: 'code' })
+    expect(taskSchema.parse(explicit)).toMatchObject({ kind: 'code', title: '[test] keep me' })
+    for (const title of ['[test] X', '[test]', 'plain']) {
+      const once = taskSchema.parse(legacyTask(title))
+      expect(taskSchema.parse(once)).toEqual(once)
+    }
+    // The migration never leaks its bookkeeping into the record.
+    expect('prefixOnly' in taskSchema.parse(legacyTask('[test]'))).toBe(false)
+    expect('matched' in taskSchema.parse(legacyTask('[test] X'))).toBe(false)
+  })
+
+  it('R2a: createTask — explicit kind, inferred kind, default other; the stored title never carries the prefix', async () => {
+    const componentId = await seedComponent()
+    const explicit = await scrum.createTask({ componentId, title: 'explicit', kind: 'test' })
+    expect(explicit).toMatchObject({ kind: 'test', title: 'explicit' })
+    const inferred = await scrum.createTask({ componentId, title: '[code] inferred' })
+    expect(inferred).toMatchObject({ kind: 'code', title: 'inferred' })
+    const plain = await scrum.createTask({ componentId, title: 'plain' })
+    expect(plain).toMatchObject({ kind: 'other', title: 'plain' })
+    // Same prefix and explicit kind: accepted, prefix removed.
+    const agreeing = await scrum.createTask({ componentId, title: '[test] agreeing', kind: 'test' })
+    expect(agreeing).toMatchObject({ kind: 'test', title: 'agreeing' })
+    // Leading whitespace does not defeat the inference (P1).
+    const padded = await scrum.createTask({ componentId, title: '  [test]  padded ' })
+    expect(padded).toMatchObject({ kind: 'test', title: 'padded' })
+    expect(taskOf(inferred.id).title).toBe('inferred')
+  })
+
+  it('R2a/R2d: createTask refuses invalid kinds, prefix-only titles and contradicting prefixes — without consuming an id (P2)', async () => {
+    const componentId = await seedComponent()
+    const before = await scrum.createTask({ componentId, title: 'anchor' })
+    await expect(scrum.createTask({ componentId, title: 'x', kind: 'spike' }))
+      .rejects.toMatchObject({ code: 'invalid-kind' })
+    await expect(scrum.createTask({ componentId, title: 'x', kind: '' }))
+      .rejects.toMatchObject({ code: 'invalid-kind' })
+    await expect(scrum.createTask({ componentId, title: '[test]' }))
+      .rejects.toMatchObject({ code: 'invalid-input' })
+    await expect(scrum.createTask({ componentId, title: '[test]   ' }))
+      .rejects.toThrow(/only a kind prefix/)
+    // Prefix-only is refused before any conflict check (matched test vs explicit other).
+    await expect(scrum.createTask({ componentId, title: '[test]', kind: 'other' }))
+      .rejects.toMatchObject({ code: 'invalid-input' })
+    await expect(scrum.createTask({ componentId, title: '   ' }))
+      .rejects.toMatchObject({ code: 'invalid-input' })
+    const conflict = await scrum.createTask({ componentId, title: '[test] X', kind: 'code' })
+      .catch((e: unknown) => e as Error & { code: string })
+    expect(conflict).toMatchObject({ code: 'kind-conflict' })
+    expect(conflict.message).toMatch(/title prefix \[test\] contradicts kind code/)
+    // The invalid-kind message names the parent (no task id exists yet).
+    await expect(scrum.createTask({ componentId, title: 'x', kind: 'spike' }))
+      .rejects.toThrow(new RegExp(`under ${componentId}`))
+    // None of the refusals burned a counter value.
+    const after = await scrum.createTask({ componentId, title: 'next' })
+    expect(Number(after.id.slice(5))).toBe(Number(before.id.slice(5)) + 1)
+  })
+
+  it('R2b/R2e: updateItem changes kind through narrowKind and never touches id/createdAt/order', async () => {
+    const componentId = await seedComponent()
+    const task = await scrum.createTask({ componentId, title: '[code] early' })
+    const changed = await scrum.updateItem(task.id, { kind: 'other' })
+    expect(changed).toMatchObject({ id: task.id, kind: 'other', title: 'early', createdAt: task.createdAt, order: task.order })
+    await expect(scrum.updateItem(task.id, { kind: 'bogus' })).rejects.toMatchObject({ code: 'invalid-kind' })
+    await expect(scrum.updateItem(task.id, { kind: '' })).rejects.toMatchObject({ code: 'invalid-kind' })
+    await expect(scrum.updateItem(task.id, { kind: 'bogus' })).rejects.toThrow(new RegExp(task.id))
+    expect(taskOf(task.id).kind).toBe('other')
+    // On non-task ids the field is ignored, like estimate.
+    const component = await scrum.updateItem(componentId, { kind: 'bogus' })
+    expect('kind' in component).toBe(false)
+  })
+
+  it('R2c/R2d: updateItem title — a prefix moves the kind, no prefix leaves it, conflicts and prefix-only are refused', async () => {
+    const componentId = await seedComponent()
+    const task = await scrum.createTask({ componentId, title: 'plain' })
+    expect(task.kind).toBe('other')
+    const renamed = await scrum.updateItem(task.id, { title: '[code] renamed' })
+    expect(renamed).toMatchObject({ kind: 'code', title: 'renamed' })
+    const kept = await scrum.updateItem(task.id, { title: 'no prefix' })
+    expect(kept).toMatchObject({ kind: 'code', title: 'no prefix' })
+    // Explicit kind agreeing with the prefix wins the same way; a different one is a conflict.
+    expect(await scrum.updateItem(task.id, { title: '[test] both', kind: 'test' })).toMatchObject({ kind: 'test', title: 'both' })
+    await expect(scrum.updateItem(task.id, { title: '[code] both', kind: 'test' }))
+      .rejects.toMatchObject({ code: 'kind-conflict' })
+    // Prefix-only title: refused, kind intact.
+    await expect(scrum.updateItem(task.id, { title: '[code]' })).rejects.toMatchObject({ code: 'invalid-input' })
+    expect(taskOf(task.id)).toMatchObject({ kind: 'test', title: 'both' })
+    // Explicit kind without a title still applies alongside other fields.
+    expect(await scrum.updateItem(task.id, { kind: 'code', estimate: 2 })).toMatchObject({ kind: 'code', estimate: 2, title: 'both' })
+  })
+})
+
+/** Carry a component to `tdd` with NO task (the gate scenarios add their own). */
+async function toEmptyTdd(id: string) {
+  await toDesign(id)
+  await scrum.updateItem(id, { design: 'erDiagram …' })
+  await scrum.advancePhase(id)
+}
+
+/** The gate's refusal message for advancing out of tdd. */
+async function tddRefusal(id: string): Promise<string> {
+  const error = await scrum.advancePhase(id).then(() => null, (e: unknown) => e as Error & { code: string })
+  if (error === null) throw new Error('expected the tdd gate to refuse')
+  expect(error).toMatchObject({ code: 'phase-gate' })
+  return error.message
+}
+
+describe('tdd gate (comp-45 R3)', () => {
+  it('R3: names (a) alone without tasks, (b) alone with only other tasks', async () => {
+    const id = await seedComponent()
+    await toEmptyTdd(id)
+    const none = await tddRefusal(id)
+    expect(none).toMatch(/no task under the component \(decompose first\)/)
+    expect(none).not.toMatch(/test task/)
+    await scrum.createTask({ componentId: id, title: 'docs' })
+    await scrum.createTask({ componentId: id, title: 'spike' })
+    const onlyOther = await tddRefusal(id)
+    expect(onlyOther).toMatch(/no test task \(kind test\) — write the tests first/)
+    expect(onlyOther).not.toMatch(/created before/)
+    expect(onlyOther).toMatch(/cannot advance from tdd to construction/)
+  })
+
+  it('R3: without any test task every code task counts as early — (b) and (c) together, ids ascending', async () => {
+    const id = await seedComponent()
+    await toEmptyTdd(id)
+    const a = await scrum.createTask({ componentId: id, title: '[code] a' })
+    await scrum.createTask({ componentId: id, title: 'other in between' })
+    const b = await scrum.createTask({ componentId: id, title: '[code] b' })
+    const message = await tddRefusal(id)
+    expect(message).toMatch(/no test task/)
+    expect(message).toMatch(new RegExp(`code task\\(s\\) created before the first test task \\(${a.id}, ${b.id}\\) — change their kind or trash them`))
+    expect(message).toMatch(/; /)
+  })
+
+  it('R3: a code task born before the first test task is named; tests first passes', async () => {
+    const id = await seedComponent()
+    await toEmptyTdd(id)
+    const early = await scrum.createTask({ componentId: id, title: '[code] too early' })
+    await scrum.createTask({ componentId: id, title: '[test] first test' })
+    await scrum.createTask({ componentId: id, title: '[code] fine' })
+    const message = await tddRefusal(id)
+    expect(message).not.toMatch(/no test task/)
+    expect(message).toMatch(new RegExp(`created before the first test task \\(${early.id}\\)`))
+    // The legitimate way out: change the early task's kind (its id stays).
+    await scrum.updateItem(early.id, { kind: 'other' })
+    expect((await scrum.advancePhase(id)).phase).toBe('construction')
+
+    const clean = await scrum.createComponent({ featureId: 'feat-1', title: 'clean' })
+    await toEmptyTdd(clean.id)
+    await scrum.createTask({ componentId: clean.id, title: '[test] t' })
+    await scrum.createTask({ componentId: clean.id, title: '[code] c' })
+    expect((await scrum.advancePhase(clean.id)).phase).toBe('construction')
+  })
+
+  it('R3: creation order is the id NUMBER — task-9 code before task-10 test violates; the reverse passes (M4)', async () => {
+    const id = await seedComponent()
+    await toEmptyTdd(id)
+    for (let i = 1; i <= 8; i += 1) await scrum.createTask({ componentId: id, title: `filler ${i}` })
+    const nine = await scrum.createTask({ componentId: id, title: '[code] nine' })
+    const ten = await scrum.createTask({ componentId: id, title: '[test] ten' })
+    expect([nine.id, ten.id]).toEqual(['task-9', 'task-10'])
+    expect(await tddRefusal(id)).toMatch(/\(task-9\)/)
+
+    // The reverse (9 test / 10 code) on a fresh board: a string comparison
+    // would call task-10 "earlier" than task-9 and refuse it.
+    const fresh = await freshBoard()
+    const rel = await fresh.createRelease({ name: 'r' })
+    const feat = await fresh.createFeature({ releaseId: rel.id, title: 'f' })
+    const comp = await fresh.createComponent({ featureId: feat.id, title: 'c' })
+    await fresh.updateItem(comp.id, { requirements: CONTRACT_REQ })
+    await fresh.updateItem(comp.id, { requirementsReview: contractReview(fresh.reviewBrief(comp.id).requirements.digest) })
+    await fresh.advancePhase(comp.id)
+    await fresh.updateItem(comp.id, { design: 'd' })
+    await fresh.advancePhase(comp.id)
+    for (let i = 1; i <= 8; i += 1) await fresh.createTask({ componentId: comp.id, title: `filler ${i}` })
+    const test9 = await fresh.createTask({ componentId: comp.id, title: '[test] nine' })
+    const code10 = await fresh.createTask({ componentId: comp.id, title: '[code] ten' })
+    expect([test9.id, code10.id]).toEqual(['task-9', 'task-10'])
+    expect((await fresh.advancePhase(comp.id)).phase).toBe('construction')
+  })
+
+  it('R3: trashed code tasks do not count; archived test tasks do', async () => {
+    const id = await seedComponent()
+    await toEmptyTdd(id)
+    const early = await scrum.createTask({ componentId: id, title: '[code] early' })
+    const test = await scrum.createTask({ componentId: id, title: '[test] t' })
+    await expect(scrum.advancePhase(id)).rejects.toThrow(/created before/)
+    await scrum.deleteItem(early.id)
+    expect((await scrum.advancePhase(id)).phase).toBe('construction')
+
+    // Archived (done) test task still satisfies (b).
+    await scrum.setPhase(id, 'tdd')
+    await finish([test.id])
+    await scrum.archiveCompleted()
+    expect((await scrum.advancePhase(id)).phase).toBe('construction')
+  })
+
+  it('R3: a legacy component with only other tasks that retreats to tdd cannot re-advance without a test task (L5)', async () => {
+    const id = await seedComponent()
+    await toEmptyTdd(id)
+    // Born before comp-45: plain titles, kind other.
+    await scrum.createTask({ componentId: id, title: '[test] placeholder' })
+    await scrum.advancePhase(id)
+    await scrum.updateItem('task-1', { kind: 'other' })
+    expect(componentOf(id).phase).toBe('construction')
+    await scrum.setPhase(id, 'tdd')
+    await expect(scrum.advancePhase(id)).rejects.toThrow(/no test task/)
+    await scrum.updateItem('task-1', { kind: 'test' })
+    expect((await scrum.advancePhase(id)).phase).toBe('construction')
+  })
+})
+
+describe('persistence — task kind migration (comp-45 R1)', () => {
+  let lifeRoot: string
+  let life: Context
+
+  beforeEach(async () => {
+    lifeRoot = mkdtempSync(join(tmpdir(), 'scrum-domain-kind-'))
+    life = await openJsonStack(lifeRoot)
+  })
+
+  afterEach(async () => {
+    await life.dispose?.()
+    rmSync(lifeRoot, { recursive: true, force: true })
+  })
+
+  it('migrates a legacy prefixed title on open and persists it normalized on the next write', async () => {
+    const board = await life.scrum.board()
+    const release = await board.createRelease({ name: 'v1.0' })
+    const feature = await board.createFeature({ releaseId: release.id, title: 'Login' })
+    const component = await board.createComponent({ featureId: feature.id, title: 'OAuth flow' })
+    const task = await board.createTask({ componentId: component.id, title: 'durable' })
+    await life.dispose?.()
+
+    // Plant a pre-v0.16 record: no `kind`, prefix inside the title (unit.version untouched).
+    const medium = join(lifeRoot, `${GLOBAL_BOARD_NAME}.json`)
+    const raw = JSON.parse(readFileSync(medium, 'utf8')) as { tables: { tasks: Record<string, Record<string, unknown>> } }
+    const record = raw.tables.tasks[task.id]!
+    delete record['kind']
+    record['title'] = '[test] X'
+    writeFileSync(medium, JSON.stringify(raw))
+
+    life = await openJsonStack(lifeRoot)
+    let reopened = await life.scrum.board()
+    expect(reopened.tree().releases[0]!.features[0]!.components[0]!.tasks[0]).toMatchObject({ kind: 'test', title: 'X' })
+    // A write of another field persists the normalized record.
+    await reopened.updateItem(task.id, { estimate: 1 })
+    await life.dispose?.()
+    const written = JSON.parse(readFileSync(medium, 'utf8')) as { tables: { tasks: Record<string, Record<string, unknown>> } }
+    expect(written.tables.tasks[task.id]).toMatchObject({ kind: 'test', title: 'X', estimate: 1 })
+
+    life = await openJsonStack(lifeRoot)
+    reopened = await life.scrum.board()
+    expect(reopened.tree().releases[0]!.features[0]!.components[0]!.tasks[0]).toMatchObject({ kind: 'test', title: 'X' })
   })
 })

@@ -6,11 +6,23 @@
 
 import { DEFAULT_SUITE_BUDGET_SECONDS, ReviewContract } from './contracts.ts'
 import type { SuiteBudget } from './contracts.ts'
-import type { Ceremony, Component, Sprint } from './spec.ts'
+import type { Ceremony, Component, Sprint, Task } from './spec.ts'
 import type { ReviewBriefData, ScrumTree, ShelfLists, SprintStatus } from './service.ts'
 
 /** Release-name lookup used to render sprint→release links. */
 export type ReleaseNames = ReadonlyMap<string, string>
+
+/**
+ * The task kind as the text views print it (v0.16, comp-45): `[test] ` /
+ * `[code] ` before the title, nothing for `other`. The prefix left the
+ * stored title on migration and comes back only here — so the tree of a
+ * pre-v0.16 board renders exactly as before.
+ * @param task - anything carrying a kind.
+ * @returns the prefix with its trailing space, or the empty string.
+ */
+export function kindPrefix(task: Pick<Task, 'kind'>): string {
+  return task.kind === 'other' ? '' : `[${task.kind}] `
+}
 
 /** " · review stale" when a valid review no longer covers the requirements (never on done components). */
 function staleSuffix(component: Component): string {
@@ -130,7 +142,7 @@ export function formatTree(tree: ScrumTree, sprints?: Sprint[]): string {
         for (const task of component.tasks) {
           const points = task.estimate === undefined ? '' : ` (${task.estimate}pt)`
           const sprint = task.sprintId === undefined ? '' : ` @${task.sprintId}`
-          lines.push(`      ${task.id} ${task.title} [${task.status}${sprint}]${points}`)
+          lines.push(`      ${task.id} ${kindPrefix(task)}${task.title} [${task.status}${sprint}]${points}`)
         }
       }
     }
@@ -168,7 +180,7 @@ export function formatSprintStatus(status: SprintStatus, releaseNames?: ReleaseN
   const columns = ['todo', 'in_progress', 'review', 'done'] as const
   const board = columns.map((column) => {
     const inColumn = tasks.filter(t => t.status === column)
-    const list = inColumn.length === 0 ? '—' : inColumn.map(t => `${t.id} ${t.title}`).join(', ')
+    const list = inColumn.length === 0 ? '—' : inColumn.map(t => `${t.id} ${kindPrefix(t)}${t.title}`).join(', ')
     return `  ${column}: ${list}`
   })
   return [head, progress, ...board].join('\n')
@@ -190,7 +202,7 @@ export function formatShelf(shelf: ShelfLists, kind: 'trash' | 'archive'): strin
   for (const component of shelf.components) lines.push(`${component.id} ${component.title} [component, of ${component.featureId}] ${stampOf(component)}`)
   for (const task of shelf.tasks) {
     const points = task.estimate === undefined ? '' : ` (${task.estimate}pt)`
-    lines.push(`${task.id} ${task.title} [task ${task.status}, of ${task.componentId}]${points} ${stampOf(task)}`)
+    lines.push(`${task.id} ${kindPrefix(task)}${task.title} [task ${task.status}, of ${task.componentId}]${points} ${stampOf(task)}`)
   }
   if (lines.length === 0) {
     return kind === 'trash'

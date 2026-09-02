@@ -11,7 +11,7 @@
 import { useState } from 'react'
 import type { ReactNode } from 'react'
 import type { ScrumState, WireComponent, WireFeature, WireRelease, WireSprint, WireTask } from './api.ts'
-import { aggOf, Rollup, StateDot, TypeIcon } from './meta.tsx'
+import { aggOf, KindChip, Rollup, StateDot, TypeIcon } from './meta.tsx'
 import type { KIND_META } from './meta.tsx'
 
 /** Callbacks the tree drives (mutations funnel through the panel). */
@@ -130,6 +130,8 @@ function Row(props: {
   state?: ReactNode
   points?: ReactNode
   sprint?: ReactNode
+  /** Chip rendered before the title (the task kind, comp-45). */
+  chip?: ReactNode
 }) {
   return (
     <div className={`scrum-bl-row lvl-${props.kind}${props.selected ? ' is-selected' : ''}`}>
@@ -144,6 +146,7 @@ function Row(props: {
           )
           : <span className="scrum-chev" />}
         <TypeIcon kind={props.kind} />
+        {props.chip}
         <button className="scrum-bl-title" title="Abrir detalhes" onClick={props.onOpen}>{props.title}</button>
         <span className="scrum-id">{props.id}</span>
         <span className="scrum-bl-hover"><RowMenu items={props.menu} /></span>
@@ -259,6 +262,7 @@ export function Tree(props: { state: ScrumState; callbacks: TreeCallbacks; ui: T
         selected={ui.selected === task.id}
         onOpen={() => { ui.select(task.id) }}
         menu={menuFor(task.id, false)}
+        chip={<KindChip kind={task.kind} />}
         state={<StateDot status={task.status} />}
         points={task.estimate !== undefined ? <span className="scrum-pts">{task.estimate} pt</span> : undefined}
         sprint={taskSprintCell(task)}

@@ -19,6 +19,8 @@ import {
   formatSprintStatus,
   formatSuiteBudget,
   formatTree,
+  kindPrefix,
+  TASK_KINDS,
   withBudgetHeader,
 } from '@scrum-harness/domain'
 // Type-only: resolves ctx.scrum for the inject declaration.
@@ -152,19 +154,26 @@ export function apply(ctx: Context): void {
 
   ctx.tools.register(defineTool({
     name: 'scrum_task_create',
-    description: 'Create a Task (tarefa) under an existing Component. Tasks start in the backlog.',
+    description:
+      'Create a Task (tarefa) under an existing Component. Tasks start in the backlog. '
+      + 'Tasks carry a kind (test | code | other): give `kind`, or start the title with [test]/[code] and it is inferred (the prefix leaves the stored title).',
     parameters: {
       componentId: { type: 'string', required: true, description: 'Parent component id (comp-N).' },
       title: { type: 'string', required: true },
       description: { type: 'string' },
       estimate: { type: 'number', description: 'Story points (relative estimation).' },
+      kind: {
+        type: 'string',
+        enum: [...TASK_KINDS],
+        description: 'Task kind. Omitted: inferred from a leading [test]/[code] in the title, else other. A prefix that contradicts an explicit kind is refused. In the tdd phase, test tasks must be created before code tasks.',
+      },
     },
     output: TEXT_OUTPUT,
     async execute(args, exec) {
       const board = await boardOf(exec)
       const task = await board.createTask(args)
       const points = task.estimate === undefined ? '' : ` (${task.estimate}pt)`
-      return { text: `Created task ${task.id} "${task.title}"${points} under ${task.componentId}.` }
+      return { text: `Created task ${task.id} ${kindPrefix(task)}"${task.title}"${points} under ${task.componentId}.` }
     },
     presentCall: args => ({ card: 'generic', title: `Create task "${args.title}"`, kind: 'edit' }),
   }))
@@ -175,7 +184,8 @@ export function apply(ctx: Context): void {
       'Update fields of any SCRUM item by id. The id prefix selects the level: '
       + 'rel- (title→name, targetDate, status: planned|active|released), feat- (title, status: proposed|committed|in_progress|done), '
       + 'comp- (title, status: proposed|in_progress|done, and the spiral artifacts requirements / requirementsReview / '
-      + 'design / validation — markdown with an optional YAML frontmatter; empty string deletes one), task- (title, estimate), '
+      + 'design / validation — markdown with an optional YAML frontmatter; empty string deletes one), task- (title, estimate, kind: test|code|other — '
+      + 'a [test]/[code] prefix in a new title moves the kind; one contradicting an explicit kind is refused), '
       + 'spr- (goal, releaseIds — replaces the linked set, releaseId as one-id shortcut, wipLimits). Description applies to all except sprints.',
     parameters: {
       id: { type: 'string', required: true },
@@ -186,6 +196,7 @@ export function apply(ctx: Context): void {
       design: { type: 'string', description: 'Components only: the design artifact (text + mermaid). Gate design → tdd.' },
       validation: { type: 'string', description: 'Components only: validation evidence — markdown with frontmatter { validated_at: "<ISO date>", suite: { tests, passed, skipped?, wall_seconds, budget_seconds ≤ the board\'s suite budget (see scrum_suite_budget; default 15), runs?: [a, b, c] }, typecheck: clean } and a body (what was checked and how — command and machine). With `runs` (≥ 3 consecutive runs, written inline) the WORST run counts and wall_seconds must report it. Gate for status done.' },
       estimate: { type: 'number', description: 'Tasks only.' },
+      kind: { type: 'string', enum: [...TASK_KINDS], description: 'Tasks only: the task kind (test | code | other).' },
       targetDate: { type: 'string', description: 'Releases only (ISO date).' },
       status: { type: 'string', description: 'Releases, features and components (each level has its own workflow). Component `done` is gated: phase validation, every task done, and a `validation` artifact honoring its contract — a refusal names every missing condition.' },
       goal: { type: 'string', description: 'Sprints only.' },
@@ -223,7 +234,7 @@ export function apply(ctx: Context): void {
         const contract = board.validationContract(id)
         notes.push(`validation contract: ${contract.ok ? 'ok' : `${contract.reasons.join('; ')} — will block status done`}`)
         // comp-50 R4: guidance from the Model's flags, never from the reasons' text.
-        if (!contract.ok && contract.overBudget) notes.push('over budget: add a test-refactor task before done')
+        if (!contract.ok && contract.overBudget) notes.push('over budget: add a test task (kind test) refactoring the suite before done')
         const budget = board.suiteBudget()
         if (budget.aboveDefault) notes.push(`budget above default (${budget.seconds}s > ${DEFAULT_SUITE_BUDGET_SECONDS}s)`)
       }
@@ -257,7 +268,8 @@ export function apply(ctx: Context): void {
       'Move a component along the spiral: requirements → design → tdd → construction → validation. '
       + 'action "advance" takes the next step through its gate (requirements→design needs the review contract: `requirements` with '
       + 'frontmatter version + status approved and a body, `requirementsReview` approved with findings.high 0 covering that version and digest; '
-      + 'design→tdd needs design; tdd→construction needs at least one task; construction→validation needs every task done). '
+      + 'design→tdd needs design; tdd→construction needs at least one test task and no code task created before the first test task; '
+      + 'construction→validation needs every task done). '
       + 'action "set" with a phase retreats freely (the spiral revisits) or advances one step through the same gate; skipping is refused. '
       + 'A refused gate names the missing condition. Every movement is logged in the component\'s phaseLog.',
     parameters: {
