@@ -192,4 +192,41 @@ describe('scrum-api', () => {
     const badRoute = await fetch(`${base}/scrum-api/nothing`)
     expect(badRoute.status).toBe(404)
   })
+
+  // ── v0.12: the spiral engine over the wire (comp-42, R6) — written before the code ──
+
+  it('drives phases and artifacts through componentPhase and updateItem', async () => {
+    await act({ action: 'createRelease', name: 'v1.0' })
+    await act({ action: 'createFeature', releaseId: 'rel-1', title: 'F' })
+    const created = await act({ action: 'createComponent', featureId: 'feat-1', title: 'C' })
+    expect(created.json.result).toMatchObject({ phase: 'requirements', phaseLog: [] })
+
+    // Gate refused over the wire: 409 with the domain code and the named condition.
+    const blocked = await act({ action: 'componentPhase', id: 'comp-1', op: 'advance' })
+    expect(blocked.status).toBe(409)
+    expect(blocked.json.code).toBe('phase-gate')
+    expect(blocked.json.message).toMatch(/requirementsReview/)
+
+    // The four artifacts through updateItem; '' deletes.
+    const filled = await act({
+      action: 'updateItem', id: 'comp-1',
+      requirements: '---\nphase: requirements\n---\nR1', requirementsReview: 'ok', design: 'D', validation: 'V',
+    })
+    expect(filled.status).toBe(200)
+    expect(filled.json.result).toMatchObject({ requirements: '---\nphase: requirements\n---\nR1', design: 'D' })
+    const cleared = await act({ action: 'updateItem', id: 'comp-1', validation: '' })
+    expect('validation' in cleared.json.result).toBe(false)
+
+    const advanced = await act({ action: 'componentPhase', id: 'comp-1', op: 'advance' })
+    expect(advanced.status).toBe(200)
+    expect(advanced.json.result).toMatchObject({ phase: 'design', status: 'in_progress' })
+    expect(advanced.json.result.phaseLog).toHaveLength(1)
+    const component = advanced.json.state.tree.releases[0].features[0].components[0]
+    expect(component).toMatchObject({ phase: 'design', requirementsReview: 'ok' })
+
+    const back = await act({ action: 'componentPhase', id: 'comp-1', op: 'set', phase: 'requirements' })
+    expect(back.json.result.phase).toBe('requirements')
+    const bad = await act({ action: 'componentPhase', id: 'comp-1', op: 'set', phase: 'nowhere' })
+    expect(bad.status).toBe(400)
+  })
 })

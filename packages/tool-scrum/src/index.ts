@@ -10,6 +10,7 @@ import { defineTool } from '@deepseek-ai/dsh-tools'
 import {
   BOARD_COLUMNS,
   CEREMONY_TYPES,
+  COMPONENT_PHASES,
   formatCeremonies,
   formatShelf,
   formatSprints,
@@ -144,12 +145,17 @@ export function apply(ctx: Context): void {
     description:
       'Update fields of any SCRUM item by id. The id prefix selects the level: '
       + 'rel- (title→name, targetDate, status: planned|active|released), feat- (title, status: proposed|committed|in_progress|done), '
-      + 'comp- (title, status: proposed|in_progress|done), task- (title, estimate), spr- (goal, releaseIds — replaces the linked '
-      + 'set, releaseId as one-id shortcut, wipLimits). Description applies to all except sprints.',
+      + 'comp- (title, status: proposed|in_progress|done, and the spiral artifacts requirements / requirementsReview / '
+      + 'design / validation — markdown with an optional YAML frontmatter; empty string deletes one), task- (title, estimate), '
+      + 'spr- (goal, releaseIds — replaces the linked set, releaseId as one-id shortcut, wipLimits). Description applies to all except sprints.',
     parameters: {
       id: { type: 'string', required: true },
       title: { type: 'string', description: 'New title / release name.' },
       description: { type: 'string' },
+      requirements: { type: 'string', description: 'Components only: the requirements artifact (acceptance criteria). Gate requirements → design.' },
+      requirementsReview: { type: 'string', description: 'Components only: summary of the adversarial review of the requirements + decisions. Gate requirements → design.' },
+      design: { type: 'string', description: 'Components only: the design artifact (text + mermaid). Gate design → tdd.' },
+      validation: { type: 'string', description: 'Components only: validation evidence (suite duration, checks, traces). Required for done.' },
       estimate: { type: 'number', description: 'Tasks only.' },
       targetDate: { type: 'string', description: 'Releases only (ISO date).' },
       status: { type: 'string', description: 'Releases, features and components (each level has its own workflow).' },
@@ -180,6 +186,40 @@ export function apply(ctx: Context): void {
       return { text: `Updated ${id}.` }
     },
     presentCall: args => ({ card: 'generic', title: `Update ${args.id}`, kind: 'edit' }),
+  }))
+
+  ctx.tools.register(defineTool({
+    name: 'scrum_component_phase',
+    description:
+      'Move a component along the spiral: requirements → design → tdd → construction → validation. '
+      + 'action "advance" takes the next step through its gate (requirements→design needs requirements AND requirementsReview; '
+      + 'design→tdd needs design; tdd→construction needs at least one task; construction→validation needs every task done). '
+      + 'action "set" with a phase retreats freely (the spiral revisits) or advances one step through the same gate; skipping is refused. '
+      + 'A refused gate names the missing condition. Every movement is logged in the component\'s phaseLog.',
+    parameters: {
+      id: { type: 'string', required: true, description: 'Component id (comp-N).' },
+      action: { type: 'string', required: true, enum: ['advance', 'set'], description: 'advance = next phase through its gate; set = go to `phase`.' },
+      phase: {
+        type: 'string',
+        enum: [...COMPONENT_PHASES],
+        description: 'Target phase — required with action "set", refused with "advance".',
+      },
+    },
+    output: TEXT_OUTPUT,
+    async execute(args, exec) {
+      const board = await boardOf(exec)
+      if (args.action === 'set' && args.phase === undefined) {
+        throw new Error('action "set" requires a phase')
+      }
+      if (args.action === 'advance' && args.phase !== undefined) {
+        throw new Error('action "advance" takes no phase (use "set" to pick one)')
+      }
+      const component = args.action === 'advance'
+        ? await board.advancePhase(args.id)
+        : await board.setPhase(args.id, args.phase!)
+      return { text: `${component.id} → ${component.phase} [${component.status}]. Phase log: ${component.phaseLog.length} movement(s).` }
+    },
+    presentCall: args => ({ card: 'generic', title: `${args.action === 'advance' ? 'Advance' : 'Set'} phase of ${args.id}`, kind: 'edit' }),
   }))
 
   ctx.tools.register(defineTool({

@@ -19,6 +19,7 @@ import type { Domain, TableKeyOf, TableValueOf } from '@deepseek-ai/dsh-storage-
 import { boardNameOf } from './boards.ts'
 import {
   BOARD_COLUMNS,
+  COMPONENT_PHASES,
   COMPONENT_STATUSES,
   FEATURE_STATUSES,
   INITIAL_COUNTERS,
@@ -28,6 +29,7 @@ import {
 import type {
   Ceremony,
   Component,
+  ComponentPhase,
   Counters,
   Feature,
   Release,
@@ -48,6 +50,14 @@ export class ScrumError extends Error {
     super(message)
     this.name = 'ScrumError'
   }
+}
+
+/** The spiral artifact fields of a component (v0.12). */
+const ARTIFACT_FIELDS = ['requirements', 'requirementsReview', 'design', 'validation'] as const
+
+/** Whether an artifact counts as filled for a phase gate: whitespace-only does not. */
+function filled(text: string | undefined): boolean {
+  return text !== undefined && text.trim().length > 0
 }
 
 /** Input to {@link ScrumService.createRelease}. */
@@ -87,6 +97,14 @@ export interface UpdateItemInput {
   targetDate?: string
   status?: string
   goal?: string
+  /**
+   * Components only (v0.12): the spiral artifacts — markdown with an optional
+   * YAML frontmatter. The empty string deletes the field.
+   */
+  requirements?: string
+  requirementsReview?: string
+  design?: string
+  validation?: string
   /** Sprints only: link to ONE release (shortcut for `releaseIds: [id]`); the empty string removes every link. */
   releaseId?: string
   /** Sprints only: REPLACE the whole set of linked releases (empty array unlinks; wins over `releaseId`). */
@@ -258,6 +276,8 @@ export class ScrumBoard {
       title: this.requireTitle(input.title),
       ...input.description === undefined ? {} : { description: input.description },
       status: 'proposed',
+      phase: 'requirements',
+      phaseLog: [],
       order: this.domain.table('components').size,
       createdAt: now,
       updatedAt: now,
@@ -452,13 +472,23 @@ export class ScrumBoard {
     }
     if (id.startsWith('comp-')) {
       this.mustGetLive('components', id)
-      return this.domain.table('components').update(id, current => ({
-        ...current,
-        ...patch.title === undefined ? {} : { title: this.requireTitle(patch.title) },
-        ...patch.description === undefined ? {} : { description: patch.description },
-        ...patch.status === undefined ? {} : { status: this.narrowStatus(patch.status, COMPONENT_STATUSES, id) },
-        ...stamp,
-      }))
+      return this.domain.table('components').update(id, (current) => {
+        const next: Component = {
+          ...current,
+          ...patch.title === undefined ? {} : { title: this.requireTitle(patch.title) },
+          ...patch.description === undefined ? {} : { description: patch.description },
+          ...patch.status === undefined ? {} : { status: this.narrowStatus(patch.status, COMPONENT_STATUSES, id) },
+          ...stamp,
+        }
+        // Spiral artifacts: set when given, deleted on the empty string.
+        for (const field of ARTIFACT_FIELDS) {
+          const value = patch[field]
+          if (value === undefined) continue
+          if (value === '') delete next[field]
+          else next[field] = value
+        }
+        return next
+      })
     }
     if (id.startsWith('task-')) {
       this.mustGetLive('tasks', id)
@@ -489,6 +519,108 @@ export class ScrumBoard {
       })
     }
     throw new ScrumError('invalid-id', `id '${id}' carries no known prefix (rel-, feat-, comp-, task-, spr-)`)
+  }
+
+  // ── the spiral (v0.12, comp-42) ───────────────────────────────────────────
+  //
+  // A component walks requirements → design → tdd → construction →
+  // validation one step at a time. Each forward step has a gate — the
+  // artifact of the phase being left, or the state of the component's tasks
+  // — evaluated INSIDE the table mutator so every caller (tools, API, GUI)
+  // meets the same rule with no read/check/write window. Retreats are free:
+  // the spiral revisits. Every movement lands in the append-only phaseLog.
+
+  /**
+   * Move one component to the next phase, through its gate.
+   * @param id - component id.
+   * @returns the updated component.
+   */
+  async advancePhase(id: string): Promise<Component> {
+    const current = this.mustGetLive('components', id)
+    const index = COMPONENT_PHASES.indexOf(current.phase)
+    const next = COMPONENT_PHASES[index + 1]
+    if (next === undefined) {
+      throw new ScrumError('phase-gate', `${id}: already at the last phase (${current.phase})`)
+    }
+    return this.setPhase(id, next)
+  }
+
+  /**
+   * Set one component's phase: backwards freely, one step forward through
+   * the gate, never skipping; the same phase is a no-op.
+   * @param id - component id.
+   * @param target - the phase to land on.
+   * @returns the updated component.
+   */
+  async setPhase(id: string, target: string): Promise<Component> {
+    const live = this.mustGetLive('components', id)
+    if (!(COMPONENT_PHASES as readonly string[]).includes(target)) {
+      throw new ScrumError('invalid-phase', `phase '${target}' is not one of ${COMPONENT_PHASES.join(', ')}`)
+    }
+    const to = target as ComponentPhase
+    if (live.status === 'done') {
+      throw new ScrumError('phase-gate', `${id}: component is done — set its status back before moving its phase`)
+    }
+    if (live.phase === to) return live
+    return this.domain.table('components').update(id, (current) => {
+      const fromIndex = COMPONENT_PHASES.indexOf(current.phase)
+      const toIndex = COMPONENT_PHASES.indexOf(to)
+      if (toIndex > fromIndex + 1) {
+        throw new ScrumError('phase-gate', `${id}: cannot skip from ${current.phase} to ${to}`)
+      }
+      if (toIndex === fromIndex + 1) {
+        const reason = this.phaseGate(current)
+        if (reason !== null) {
+          throw new ScrumError('phase-gate', `${id}: ${reason} — cannot advance from ${current.phase} to ${to}`)
+        }
+      }
+      const now = this.now()
+      return {
+        ...current,
+        phase: to,
+        // The first advance of a proposed component starts it.
+        ...current.status === 'proposed' && toIndex > fromIndex ? { status: 'in_progress' as const } : {},
+        phaseLog: [...current.phaseLog, { from: current.phase, to, at: now }],
+        updatedAt: now,
+      }
+    })
+  }
+
+  /**
+   * The condition to LEAVE a component's current phase, or null when met.
+   * Task gates count the component's non-trashed tasks — archived done tasks
+   * still count (archiving finished work is the recommended flow).
+   * @param component - the component as the mutator sees it.
+   * @returns the missing condition, or null.
+   */
+  private phaseGate(component: Component): string | null {
+    switch (component.phase) {
+      case 'requirements': {
+        const missing = (['requirements', 'requirementsReview'] as const).filter(f => !filled(component[f]))
+        return missing.length === 0 ? null : `${missing.join(' and ')} ${missing.length === 1 ? 'is' : 'are'} empty`
+      }
+      case 'design':
+        return filled(component.design) ? null : 'design is empty'
+      case 'tdd': {
+        const tasks = this.tasksOf(component.id)
+        return tasks.length > 0 ? null : 'no task under the component (decompose first)'
+      }
+      case 'construction': {
+        const tasks = this.tasksOf(component.id)
+        if (tasks.length === 0) return 'no task under the component'
+        const open = tasks.filter(t => t.status !== 'done')
+        return open.length === 0 ? null : `${open.length} task(s) not done (${open.map(t => t.id).join(', ')})`
+      }
+      case 'validation':
+        return null
+    }
+  }
+
+  /** The component's tasks that count for phase gates: everything not in the trash. */
+  private tasksOf(componentId: string): Task[] {
+    return [...this.domain.table('tasks').entries()]
+      .map(([, task]) => task)
+      .filter(t => t.componentId === componentId && t.deletedAt === undefined)
   }
 
   // ── lifecycle: trash & archive ────────────────────────────────────────────

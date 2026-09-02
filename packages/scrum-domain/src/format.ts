@@ -42,7 +42,7 @@ export function formatTree(tree: ScrumTree, sprints?: Sprint[]): string {
     for (const feature of release.features) {
       lines.push(`  ${feature.id} ${feature.title} [${feature.status}]`)
       for (const component of feature.components) {
-        lines.push(`    ${component.id} ${component.title} [${component.status}]`)
+        lines.push(`    ${component.id} ${component.title} [${component.status} · ${component.phase}]`)
         for (const task of component.tasks) {
           const points = task.estimate === undefined ? '' : ` (${task.estimate}pt)`
           const sprint = task.sprintId === undefined ? '' : ` @${task.sprintId}`

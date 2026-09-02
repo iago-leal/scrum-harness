@@ -22,6 +22,13 @@ export const FEATURE_STATUSES = ['proposed', 'committed', 'in_progress', 'done']
  */
 export const COMPONENT_STATUSES = ['proposed', 'in_progress', 'done'] as const
 /**
+ * The spiral phases a Component walks (v0.12, comp-42): requirements →
+ * design → tdd → construction → validation. Ordered: the service advances
+ * one step at a time through gates and retreats freely.
+ */
+export const COMPONENT_PHASES = ['requirements', 'design', 'tdd', 'construction', 'validation'] as const
+export type ComponentPhase = (typeof COMPONENT_PHASES)[number]
+/**
  * Task workflow. `backlog` means not selected into any sprint; the four other
  * statuses are the Kanban columns of the sprint the task belongs to.
  */
@@ -91,11 +98,32 @@ export const componentSchema = z.object({
    * bump — the domain parses every record on open and keeps the parsed value.
    */
   status: z.enum(COMPONENT_STATUSES).default('proposed'),
+  /**
+   * Spiral phase (v0.12). Optional on input so pre-v0.12 media loads; the
+   * transform below derives it — `done` components land on `validation`,
+   * everything else starts at `requirements` (no version bump).
+   */
+  phase: z.enum(COMPONENT_PHASES).optional(),
+  /** Phase artifacts: markdown with an optional YAML frontmatter (R9). */
+  requirements: z.string().optional(),
+  requirementsReview: z.string().optional(),
+  design: z.string().optional(),
+  validation: z.string().optional(),
+  /** Append-only trail of phase movements, retreats included. */
+  phaseLog: z.array(z.object({
+    from: z.enum(COMPONENT_PHASES),
+    to: z.enum(COMPONENT_PHASES),
+    at: isoDate,
+  })).optional(),
   order: z.number().int().nonnegative(),
   createdAt: isoDate,
   updatedAt: isoDate,
   ...shelfFields,
-})
+}).transform(({ phase, phaseLog, ...rest }) => ({
+  ...rest,
+  phase: phase ?? (rest.status === 'done' ? 'validation' : 'requirements'),
+  phaseLog: phaseLog ?? [],
+}))
 export type Component = z.infer<typeof componentSchema>
 
 /** Leaf level: a Task of a Component; the unit selected into sprints. */

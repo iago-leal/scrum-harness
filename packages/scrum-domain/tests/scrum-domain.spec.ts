@@ -533,3 +533,173 @@ describe('boards per workspace (v0.5)', () => {
     expect((await ctx.scrum.board()).tree().releases).toHaveLength(0)
   })
 })
+
+// ── v0.12: the spiral engine (comp-42) ────────────────────────────────────
+//
+// Written BEFORE the implementation (TDD): every case here maps to a
+// requirement of comp-42 (R1–R9) and must fail until spec.ts/service.ts
+// grow phase, artifacts, phaseLog and the gates.
+
+/** The component record as the tree currently holds it. */
+function componentOf(id: string) {
+  for (const release of scrum.tree().releases) {
+    for (const feature of release.features) {
+      const found = feature.components.find(c => c.id === id)
+      if (found !== undefined) return found
+    }
+  }
+  throw new Error(`component ${id} not in tree`)
+}
+
+/** Fill the two artifacts the first gate needs and advance to design. */
+async function toDesign(id: string) {
+  await scrum.updateItem(id, { requirements: 'R1 …', requirementsReview: 'reviewed' })
+  return scrum.advancePhase(id)
+}
+
+/** Carry a component to `tdd` with one task under it. */
+async function toTdd(id: string) {
+  await toDesign(id)
+  await scrum.updateItem(id, { design: 'erDiagram …' })
+  await scrum.advancePhase(id)
+  return scrum.createTask({ componentId: id, title: 'first task' })
+}
+
+/** Plan+start a sprint with the tasks and move them all to done. */
+async function finish(taskIds: string[]) {
+  const sprint = await scrum.planSprint({ goal: 'g', taskIds })
+  await scrum.startSprint(sprint.id)
+  for (const taskId of taskIds) await scrum.moveTask(taskId, 'done')
+  await scrum.endSprint()
+}
+
+describe('spiral phases (R1, R2, R7)', () => {
+  it('new components start at requirements with an empty phaseLog', async () => {
+    const id = await seedComponent()
+    expect(componentOf(id)).toMatchObject({ phase: 'requirements', phaseLog: [] })
+  })
+
+  it('migrates legacy media on parse: done → validation, otherwise requirements (R1)', () => {
+    const base = {
+      id: 'comp-1', featureId: 'feat-1', title: 'old', order: 0,
+      createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z',
+    }
+    expect(componentSchema.parse({ ...base, status: 'done' })).toMatchObject({ phase: 'validation', phaseLog: [] })
+    expect(componentSchema.parse({ ...base, status: 'in_progress' })).toMatchObject({ phase: 'requirements' })
+    expect(componentSchema.parse({ ...base })).toMatchObject({ status: 'proposed', phase: 'requirements' })
+    // Canonical media passes through untouched.
+    const log = [{ from: 'requirements', to: 'design', at: '2026-01-02T00:00:00.000Z' }]
+    expect(componentSchema.parse({ ...base, status: 'in_progress', phase: 'design', phaseLog: log }))
+      .toMatchObject({ phase: 'design', phaseLog: log })
+  })
+
+  it('stores the four artifacts through updateItem; the empty string deletes one (R2)', async () => {
+    const id = await seedComponent()
+    const set = await scrum.updateItem(id, {
+      requirements: 'R1', requirementsReview: 'ok', design: 'D', validation: 'V',
+    })
+    expect(set).toMatchObject({ requirements: 'R1', requirementsReview: 'ok', design: 'D', validation: 'V' })
+    const cleared = await scrum.updateItem(id, { design: '' })
+    expect('design' in cleared).toBe(false)
+    expect(cleared).toMatchObject({ requirements: 'R1' })
+  })
+
+  it('promotes a proposed component to in_progress on its first advance (R7)', async () => {
+    const id = await seedComponent()
+    expect(componentOf(id).status).toBe('proposed')
+    const advanced = await toDesign(id)
+    expect(advanced).toMatchObject({ status: 'in_progress', phase: 'design' })
+  })
+
+  it('refuses setPhase on a done component and on shelved ones (R7)', async () => {
+    const id = await seedComponent()
+    await scrum.updateItem(id, { status: 'done' })
+    await expect(scrum.setPhase(id, 'requirements')).rejects.toMatchObject({ code: 'phase-gate' })
+
+    const trashed = await seedComponent()
+    await scrum.deleteItem(trashed)
+    // Shelved items refuse with the house codes (`in-trash` / `archived`).
+    await expect(scrum.advancePhase(trashed)).rejects.toMatchObject({ code: 'in-trash' })
+  })
+})
+
+describe('spiral gates (R3, R4, R5)', () => {
+  it('requirements → design needs BOTH requirements and requirementsReview, named on failure', async () => {
+    const id = await seedComponent()
+    await expect(scrum.advancePhase(id)).rejects.toMatchObject({ code: 'phase-gate' })
+    await scrum.updateItem(id, { requirements: 'R1' })
+    await expect(scrum.advancePhase(id)).rejects.toThrow(/requirementsReview/)
+    // Whitespace-only does not count as filled.
+    await scrum.updateItem(id, { requirementsReview: '   ' })
+    await expect(scrum.advancePhase(id)).rejects.toThrow(/requirementsReview/)
+    await scrum.updateItem(id, { requirementsReview: 'reviewed' })
+    expect((await scrum.advancePhase(id)).phase).toBe('design')
+  })
+
+  it('design → tdd needs design; tdd → construction needs at least one task', async () => {
+    const id = await seedComponent()
+    await toDesign(id)
+    await expect(scrum.advancePhase(id)).rejects.toThrow(/design/)
+    await scrum.updateItem(id, { design: 'erDiagram' })
+    expect((await scrum.advancePhase(id)).phase).toBe('tdd')
+    await expect(scrum.advancePhase(id)).rejects.toThrow(/task/)
+    await scrum.createTask({ componentId: id, title: 't' })
+    expect((await scrum.advancePhase(id)).phase).toBe('construction')
+  })
+
+  it('construction → validation needs every non-trashed task done; archived done tasks COUNT', async () => {
+    const id = await seedComponent()
+    const first = await toTdd(id)
+    const second = await scrum.createTask({ componentId: id, title: 'second' })
+    await scrum.advancePhase(id)
+    await expect(scrum.advancePhase(id)).rejects.toThrow(/done/)
+
+    await finish([first.id, second.id])
+    // Archive the finished tasks (the recommended flow) — they still count.
+    await scrum.archiveCompleted()
+    expect((await scrum.advancePhase(id)).phase).toBe('validation')
+  })
+
+  it('trashed tasks leave the denominator; a lone trashed task blocks tdd → construction', async () => {
+    const id = await seedComponent()
+    const task = await toTdd(id)
+    await scrum.deleteItem(task.id)
+    await expect(scrum.advancePhase(id)).rejects.toThrow(/task/)
+  })
+
+  it('never skips forward; retreats freely; delta 0 is a no-op; terminal advance errors (R4)', async () => {
+    const id = await seedComponent()
+    await expect(scrum.setPhase(id, 'tdd')).rejects.toThrow(/skip/)
+    const design = await toDesign(id)
+    expect(design.phase).toBe('design')
+    // Retreat without any gate, even with artifacts cleared.
+    await scrum.updateItem(id, { requirements: '' })
+    expect((await scrum.setPhase(id, 'requirements')).phase).toBe('requirements')
+    // Same phase: no-op, no log entry.
+    const before = componentOf(id).phaseLog.length
+    await scrum.setPhase(id, 'requirements')
+    expect(componentOf(id).phaseLog).toHaveLength(before)
+    // Terminal.
+    const done = await seedComponent()
+    const task = await toTdd(done)
+    await scrum.advancePhase(done)
+    await finish([task.id])
+    await scrum.advancePhase(done)
+    await expect(scrum.advancePhase(done)).rejects.toThrow(/last phase/)
+  })
+
+  it('appends one phaseLog entry per movement, retreats included (R4)', async () => {
+    const id = await seedComponent()
+    await toDesign(id)
+    await scrum.setPhase(id, 'requirements')
+    const log = componentOf(id).phaseLog
+    expect(log.map(e => `${e.from}>${e.to}`)).toEqual(['requirements>design', 'design>requirements'])
+    for (const entry of log) expect(entry.at).toMatch(/^\d{4}-/)
+  })
+
+  it('gate errors carry the ScrumError code and name both phases (R5)', async () => {
+    const id = await seedComponent()
+    await expect(scrum.advancePhase(id)).rejects.toMatchObject({ code: 'phase-gate' })
+    await expect(scrum.advancePhase(id)).rejects.toThrow(/requirements to design/)
+  })
+})

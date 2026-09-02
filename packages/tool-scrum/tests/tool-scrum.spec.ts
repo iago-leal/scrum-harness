@@ -185,4 +185,44 @@ describe('tool-scrum', () => {
     const badColumn = await run('scrum_task_move', { taskId: 'task-1', column: 'sideways' })
     expect(badColumn.isError).toBe(true)
   })
+
+  // ── v0.12: the spiral engine through the tool (comp-42, R6) — written before the code ──
+
+  it('walks a component through the spiral with scrum_component_phase', async () => {
+    await run('scrum_release_create', { name: 'v1.0' })
+    await run('scrum_feature_create', { releaseId: 'rel-1', title: 'Login' })
+    await run('scrum_component_create', { featureId: 'feat-1', title: 'OAuth' })
+    expect(ctx.tools.schemas().map(s => s.name)).toContain('scrum_component_phase')
+
+    // Gate refused: the tool reports the named condition as an error.
+    const blocked = await run('scrum_component_phase', { id: 'comp-1', action: 'advance' })
+    expect(blocked.isError).toBe(true)
+    expect(blocked.text).toMatch(/requirements/)
+
+    // Artifacts flow through scrum_item_update; the tree shows [status · phase].
+    await run('scrum_item_update', { id: 'comp-1', requirements: 'R1 …', requirementsReview: 'reviewed' })
+    const advanced = await run('scrum_component_phase', { id: 'comp-1', action: 'advance' })
+    expect(advanced.isError).toBe(false)
+    expect(advanced.text).toContain('comp-1 → design')
+    expect((await run('scrum_tree', {})).text).toContain('comp-1 OAuth [in_progress · design]')
+
+    // set: retreat freely, skip refused.
+    const back = await run('scrum_component_phase', { id: 'comp-1', action: 'set', phase: 'requirements' })
+    expect(back.text).toContain('comp-1 → requirements')
+    const skip = await run('scrum_component_phase', { id: 'comp-1', action: 'set', phase: 'tdd' })
+    expect(skip.isError).toBe(true)
+    expect(skip.text).toMatch(/skip/)
+  })
+
+  it('validates scrum_component_phase arguments: set needs a phase, advance refuses one', async () => {
+    await run('scrum_release_create', { name: 'v1.0' })
+    await run('scrum_feature_create', { releaseId: 'rel-1', title: 'F' })
+    await run('scrum_component_create', { featureId: 'feat-1', title: 'C' })
+    const noPhase = await run('scrum_component_phase', { id: 'comp-1', action: 'set' })
+    expect(noPhase.isError).toBe(true)
+    expect(noPhase.text).toMatch(/phase/)
+    const withPhase = await run('scrum_component_phase', { id: 'comp-1', action: 'advance', phase: 'design' })
+    expect(withPhase.isError).toBe(true)
+    expect(withPhase.text).toMatch(/advance/)
+  })
 })

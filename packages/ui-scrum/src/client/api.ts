@@ -26,8 +26,20 @@ export interface WireComponent {
   title: string
   description?: string
   status: 'proposed' | 'in_progress' | 'done'
+  /** Spiral phase (v0.12); always present on the wire. */
+  phase: WirePhase
+  /** Spiral artifacts: markdown with an optional YAML frontmatter. */
+  requirements?: string
+  requirementsReview?: string
+  design?: string
+  validation?: string
+  /** Append-only trail of phase movements. */
+  phaseLog: { from: WirePhase; to: WirePhase; at: string }[]
   tasks: WireTask[]
 }
+
+/** The spiral phases of a component (v0.12). */
+export type WirePhase = 'requirements' | 'design' | 'tdd' | 'construction' | 'validation'
 
 /** One feature with its components. */
 export interface WireFeature {
