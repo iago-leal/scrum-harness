@@ -4,11 +4,93 @@
  * @module @scrum-harness/domain/format
  */
 
-import type { Ceremony, Sprint } from './spec.ts'
-import type { ScrumTree, ShelfLists, SprintStatus } from './service.ts'
+import { ReviewContract } from './contracts.ts'
+import type { Ceremony, Component, Sprint } from './spec.ts'
+import type { ReviewBriefData, ScrumTree, ShelfLists, SprintStatus } from './service.ts'
 
 /** Release-name lookup used to render sprint→release links. */
 export type ReleaseNames = ReadonlyMap<string, string>
+
+/** " · review stale" when a valid review no longer covers the requirements (never on done components). */
+function staleSuffix(component: Component): string {
+  if (component.status === 'done') return ''
+  return new ReviewContract().stale(component) ? ' · review stale' : ''
+}
+
+/** Design artifacts above this size are omitted from the brief (R4 token ceiling). */
+const BRIEF_DESIGN_LIMIT = 6000
+
+/**
+ * Render the reviewer's brief (v0.13, comp-48): the component's state in a
+ * fixed block order, then the house conventions — which is how they travel
+ * to any workspace — the guiding questions and the exact response format
+ * with the contract's frontmatter pre-filled.
+ * @param data - what `ScrumBoard.reviewBrief` returned.
+ * @returns the brief text, ready to be handed to an adversarial reviewer.
+ */
+export function formatReviewBrief(data: ReviewBriefData): string {
+  const { component, requirements, previousReview, design, taskCount } = data
+  // Round: previous + 1 when the previous review is valid; 2 when a review
+  // exists without a valid frontmatter (a round did happen); 1 when none.
+  const round = previousReview === undefined ? 1 : previousReview.meta === null ? 2 : previousReview.meta.round + 1
+  const blocks: string[] = []
+  blocks.push(
+    `# Adversarial review brief — ${component.id} "${component.title}"`,
+    `${component.description === undefined ? '' : `${component.description}\n`}Phase: ${component.phase} · status: ${component.status}`,
+  )
+  blocks.push(`## Requirements version ${requirements.version} (digest ${requirements.digest}) — status: ${requirements.status ?? 'missing'}`)
+  blocks.push(`## Requirements\n\n${requirements.body}`)
+  if (previousReview !== undefined) {
+    const label = previousReview.meta === null
+      ? '## Previous review (no valid frontmatter)'
+      : `## Previous review — covered version ${previousReview.meta.reviewed_version}, digest ${previousReview.meta.reviewed_digest}, verdict ${previousReview.meta.verdict}, round ${previousReview.meta.round}`
+    blocks.push(`${label}\n\n${previousReview.body}\n\nConfirm item by item whether each earlier finding was absorbed by the current text.`)
+  }
+  if (design !== undefined) {
+    blocks.push(design.length > BRIEF_DESIGN_LIMIT
+      ? `## Design omitted (${design.length} chars > ${BRIEF_DESIGN_LIMIT}) — read the component's design artifact directly.`
+      : `## Design\n\n${design}`)
+  }
+  blocks.push(`## Tasks under the component: ${taskCount}`)
+  blocks.push([
+    '## House conventions (check the spec against them)',
+    '- Architecture: MVC and object-oriented design. Model = scrum-domain (classes own every rule and invariant);',
+    '  Controller = tools / API / commands (translate calls to model methods, no rules of their own); View = format.ts and the GUI.',
+    '  The design of every component must declare its Model/View/Controller split and the classes involved.',
+    '- Artifacts (requirements, requirementsReview, design, validation) are markdown with a YAML frontmatter on line 1.',
+    '- The spiral: requirements → design → tdd → construction → validation; forward steps go through gates evaluated in the',
+    '  domain (inside the table mutator); every refusal names the missing condition; retreats are free and logged.',
+    '- Tests before code (TDD); validation records the suite duration against the board budget.',
+  ].join('\n'))
+  blocks.push([
+    '## Guiding questions (do not stop at them)',
+    '- Logical gaps, contradictions between requirements, conditions that cannot be satisfied.',
+    '- Interactions with status, phases, trash/archive, sprints, and legacy media (migration on parse, no version bump).',
+    '- Which surface enforces each rule (tool, API, GUI drag/select) — can any bypass the domain?',
+    '- Concurrency and idempotency; error codes and messages; what the tests must cover.',
+    '- What this component must expose so the traceability matrix (requirement ↔ files ↔ tests) can be fed.',
+  ].join('\n'))
+  blocks.push([
+    '## Response format (mandatory)',
+    'You are READ-ONLY: do not modify files, do not run installers (npm/pnpm/yarn) or builds, do not run the test suite — read the code to ground your findings.',
+    'Prioritized findings — HIGH / MEDIUM / LOW — each with: the problem, why it matters, the concrete change (proposed requirement text when it fits).',
+    'Then a section "Requirements I would keep", and the verdict (approved | needs-revision).',
+    'End with this frontmatter, filling only reviewer, verdict and findings (the rest is pre-filled for this exact text):',
+    '```yaml',
+    '---',
+    `component: ${component.id}`,
+    'reviewer: <who>',
+    `reviewed_version: ${requirements.version}`,
+    // Quoted: an all-digit digest would otherwise be parsed as a number (H1).
+    `reviewed_digest: "${requirements.digest}"`,
+    'verdict: <approved | needs-revision>',
+    `round: ${round}`,
+    'findings: { high: <n>, medium: <n>, low: <n> }',
+    '---',
+    '```',
+  ].join('\n'))
+  return blocks.join('\n\n')
+}
 
 /** Render one sprint's release links (empty when unlinked; many since v0.11). */
 function releaseSuffix(sprint: Sprint, names?: ReleaseNames): string {
@@ -42,7 +124,7 @@ export function formatTree(tree: ScrumTree, sprints?: Sprint[]): string {
     for (const feature of release.features) {
       lines.push(`  ${feature.id} ${feature.title} [${feature.status}]`)
       for (const component of feature.components) {
-        lines.push(`    ${component.id} ${component.title} [${component.status} · ${component.phase}]`)
+        lines.push(`    ${component.id} ${component.title} [${component.status} · ${component.phase}${staleSuffix(component)}]`)
         for (const task of component.tasks) {
           const points = task.estimate === undefined ? '' : ` (${task.estimate}pt)`
           const sprint = task.sprintId === undefined ? '' : ` @${task.sprintId}`

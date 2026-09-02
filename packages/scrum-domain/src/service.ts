@@ -17,6 +17,8 @@
 import { Context, Service } from '@deepseek-ai/cordis'
 import type { Domain, TableKeyOf, TableValueOf } from '@deepseek-ai/dsh-storage-domain'
 import { boardNameOf } from './boards.ts'
+import { ReviewContract } from './contracts.ts'
+import type { ContractResult, ReviewMeta } from './contracts.ts'
 import {
   BOARD_COLUMNS,
   COMPONENT_PHASES,
@@ -58,6 +60,22 @@ const ARTIFACT_FIELDS = ['requirements', 'requirementsReview', 'design', 'valida
 /** Whether an artifact counts as filled for a phase gate: whitespace-only does not. */
 function filled(text: string | undefined): boolean {
   return text !== undefined && text.trim().length > 0
+}
+
+/**
+ * What a reviewer needs to review one component's requirements (v0.13,
+ * comp-48): produced by {@link ScrumBoard.reviewBrief} (Model), rendered by
+ * `formatReviewBrief` (View), delivered by the tool (Controller).
+ */
+export interface ReviewBriefData {
+  component: Component
+  requirements: { version: number; digest: string; status: string | undefined; body: string }
+  /** The previous review when one exists (typed meta when its frontmatter is valid). */
+  previousReview?: { meta: ReviewMeta | null; body: string }
+  /** The design artifact, only once the component is past requirements. */
+  design?: string
+  /** Non-trashed tasks under the component. */
+  taskCount: number
 }
 
 /** Input to {@link ScrumService.createRelease}. */
@@ -596,8 +614,9 @@ export class ScrumBoard {
   private phaseGate(component: Component): string | null {
     switch (component.phase) {
       case 'requirements': {
-        const missing = (['requirements', 'requirementsReview'] as const).filter(f => !filled(component[f]))
-        return missing.length === 0 ? null : `${missing.join(' and ')} ${missing.length === 1 ? 'is' : 'are'} empty`
+        // v0.13 (comp-48): the review contract — every violated condition, named.
+        const result = new ReviewContract().check(component)
+        return result.ok ? null : result.reasons.join('; ')
       }
       case 'design':
         return filled(component.design) ? null : 'design is empty'
@@ -613,6 +632,56 @@ export class ScrumBoard {
       }
       case 'validation':
         return null
+    }
+  }
+
+  /**
+   * The review contract's verdict on one component, as the gate will see it
+   * (v0.13, comp-48): lets callers warn before the gate refuses.
+   * @param id - component id.
+   * @returns ok, or every violated condition.
+   */
+  reviewContract(id: string): ContractResult {
+    return new ReviewContract().check(this.mustGetLive('components', id))
+  }
+
+  /**
+   * Everything a reviewer needs to review one component's requirements
+   * (v0.13, comp-48). Model side only — `formatReviewBrief` renders it.
+   * @param id - component id.
+   * @returns the brief data.
+   */
+  reviewBrief(id: string): ReviewBriefData {
+    const component = this.mustGetLive('components', id)
+    const contract = new ReviewContract()
+    const requirements = contract.requirements
+    if (!filled(component.requirements)) {
+      throw new ScrumError('review-brief', `${id}: \`requirements\` is empty — write them before asking for a review`)
+    }
+    const { meta, issues } = requirements.meta(component)
+    if (meta === null) {
+      const hint = issues.some(i => i.includes('missing or malformed'))
+        ? '`requirements` has no frontmatter version — add `---`, `version: 1`, `---` on top'
+        : '`requirements` frontmatter invalid'
+      throw new ScrumError('review-brief', `${id}: ${hint} (${issues.join('; ')})`)
+    }
+    if (requirements.body(component).length === 0) {
+      throw new ScrumError('review-brief', `${id}: \`requirements\` body is empty (only frontmatter) — nothing to review`)
+    }
+    const pastRequirements = COMPONENT_PHASES.indexOf(component.phase) > 0
+    return {
+      component,
+      requirements: {
+        version: meta.version,
+        digest: requirements.digest(component),
+        status: meta.status,
+        body: requirements.body(component),
+      },
+      ...filled(component.requirementsReview)
+        ? { previousReview: { meta: contract.meta(component).meta, body: contract.body(component) } }
+        : {},
+      ...pastRequirements && filled(component.design) ? { design: component.design } : {},
+      taskCount: this.tasksOf(id).length,
     }
   }
 

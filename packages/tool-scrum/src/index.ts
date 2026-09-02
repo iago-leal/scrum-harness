@@ -12,6 +12,7 @@ import {
   CEREMONY_TYPES,
   COMPONENT_PHASES,
   formatCeremonies,
+  formatReviewBrief,
   formatShelf,
   formatSprints,
   formatSprintStatus,
@@ -152,8 +153,8 @@ export function apply(ctx: Context): void {
       id: { type: 'string', required: true },
       title: { type: 'string', description: 'New title / release name.' },
       description: { type: 'string' },
-      requirements: { type: 'string', description: 'Components only: the requirements artifact (acceptance criteria). Gate requirements → design.' },
-      requirementsReview: { type: 'string', description: 'Components only: summary of the adversarial review of the requirements + decisions. Gate requirements → design.' },
+      requirements: { type: 'string', description: 'Components only: the requirements artifact — markdown with a YAML frontmatter on line 1 carrying `version: <int ≥ 1>` and, once the human approved them, `status: approved`. Gate requirements → design.' },
+      requirementsReview: { type: 'string', description: 'Components only: the adversarial review — markdown with frontmatter { reviewer, reviewed_version, reviewed_digest, verdict: approved|needs-revision, round, findings: { high, medium, low } } (get it pre-filled from scrum_component_review_brief). The gate needs verdict approved with findings.high 0, covering the current requirements version and digest.' },
       design: { type: 'string', description: 'Components only: the design artifact (text + mermaid). Gate design → tdd.' },
       validation: { type: 'string', description: 'Components only: validation evidence (suite duration, checks, traces). Required for done.' },
       estimate: { type: 'number', description: 'Tasks only.' },
@@ -183,16 +184,44 @@ export function apply(ctx: Context): void {
       const board = await boardOf(exec)
       const { id, ...patch } = args
       await board.updateItem(id, patch as Parameters<typeof board.updateItem>[1])
+      // Early feedback on the review contract (comp-48 R7): warn, never block.
+      if (id.startsWith('comp-') && (args.requirements !== undefined || args.requirementsReview !== undefined)) {
+        const contract = board.reviewContract(id)
+        const verdict = contract.ok
+          ? 'ok'
+          : `${contract.reasons.join('; ')} — will block requirements → design`
+        return { text: `Updated ${id}. review contract: ${verdict}` }
+      }
       return { text: `Updated ${id}.` }
     },
     presentCall: args => ({ card: 'generic', title: `Update ${args.id}`, kind: 'edit' }),
   }))
 
   ctx.tools.register(defineTool({
+    name: 'scrum_component_review_brief',
+    description:
+      'The briefing to hand to an adversarial reviewer (a subagent) of one component\'s requirements: the requirements '
+      + '(version + digest), the previous review when one exists, the design once past requirements, the house conventions, '
+      + 'guiding questions, and the mandatory response format with the review frontmatter PRE-FILLED for this exact text. '
+      + 'Paste the reviewer\'s report into requirementsReview via scrum_item_update; the requirements → design gate needs an '
+      + 'approved review (findings.high 0) covering the current version and digest, and requirements with `status: approved`.',
+    parameters: {
+      id: { type: 'string', required: true, description: 'Component id (comp-N). Its requirements must carry a frontmatter `version`.' },
+    },
+    output: TEXT_OUTPUT,
+    async execute(args, exec) {
+      const board = await boardOf(exec)
+      return { text: formatReviewBrief(board.reviewBrief(args.id)) }
+    },
+    presentCall: args => ({ card: 'generic', title: `Review brief for ${args.id}`, kind: 'read' }),
+  }))
+
+  ctx.tools.register(defineTool({
     name: 'scrum_component_phase',
     description:
       'Move a component along the spiral: requirements → design → tdd → construction → validation. '
-      + 'action "advance" takes the next step through its gate (requirements→design needs requirements AND requirementsReview; '
+      + 'action "advance" takes the next step through its gate (requirements→design needs the review contract: `requirements` with '
+      + 'frontmatter version + status approved and a body, `requirementsReview` approved with findings.high 0 covering that version and digest; '
       + 'design→tdd needs design; tdd→construction needs at least one task; construction→validation needs every task done). '
       + 'action "set" with a phase retreats freely (the spiral revisits) or advances one step through the same gate; skipping is refused. '
       + 'A refused gate names the missing condition. Every movement is logged in the component\'s phaseLog.',

@@ -551,9 +551,18 @@ function componentOf(id: string) {
   throw new Error(`component ${id} not in tree`)
 }
 
-/** Fill the two artifacts the first gate needs and advance to design. */
+/** An approved v1 requirements artifact (the review contract of comp-48 needs the frontmatter). */
+const CONTRACT_REQ = '---\nversion: 1\nstatus: approved\n---\nR1 — the component must work.'
+
+/** An approved round-1 review covering CONTRACT_REQ (digest from the contract). */
+function contractReview(digest: string): string {
+  return `---\nreviewer: subagent\nreviewed_version: 1\nreviewed_digest: ${digest}\nverdict: approved\nround: 1\nfindings: { high: 0, medium: 0, low: 0 }\n---\nNo blocking finding.`
+}
+
+/** Fill the two artifacts the first gate needs (per the review contract) and advance to design. */
 async function toDesign(id: string) {
-  await scrum.updateItem(id, { requirements: 'R1 …', requirementsReview: 'reviewed' })
+  await scrum.updateItem(id, { requirements: CONTRACT_REQ })
+  await scrum.updateItem(id, { requirementsReview: contractReview(scrum.reviewBrief(id).requirements.digest) })
   return scrum.advancePhase(id)
 }
 
@@ -627,12 +636,12 @@ describe('spiral gates (R3, R4, R5)', () => {
   it('requirements → design needs BOTH requirements and requirementsReview, named on failure', async () => {
     const id = await seedComponent()
     await expect(scrum.advancePhase(id)).rejects.toMatchObject({ code: 'phase-gate' })
-    await scrum.updateItem(id, { requirements: 'R1' })
-    await expect(scrum.advancePhase(id)).rejects.toThrow(/requirementsReview/)
+    await scrum.updateItem(id, { requirements: CONTRACT_REQ })
+    await expect(scrum.advancePhase(id)).rejects.toThrow(/`requirementsReview` is empty/)
     // Whitespace-only does not count as filled.
     await scrum.updateItem(id, { requirementsReview: '   ' })
-    await expect(scrum.advancePhase(id)).rejects.toThrow(/requirementsReview/)
-    await scrum.updateItem(id, { requirementsReview: 'reviewed' })
+    await expect(scrum.advancePhase(id)).rejects.toThrow(/`requirementsReview` is empty/)
+    await scrum.updateItem(id, { requirementsReview: contractReview(scrum.reviewBrief(id).requirements.digest) })
     expect((await scrum.advancePhase(id)).phase).toBe('design')
   })
 
@@ -701,5 +710,107 @@ describe('spiral gates (R3, R4, R5)', () => {
     const id = await seedComponent()
     await expect(scrum.advancePhase(id)).rejects.toMatchObject({ code: 'phase-gate' })
     await expect(scrum.advancePhase(id)).rejects.toThrow(/requirements to design/)
+  })
+})
+
+// ── v0.13: the review contract behind the first gate (comp-48) ────────────
+//
+// Written BEFORE the implementation (TDD). The requirements → design gate
+// stops accepting "any text" and demands the review contract: approved,
+// versioned, human-stamped requirements and a structured review covering
+// exactly that text.
+
+const APPROVED_REQ = '---\nversion: 1\nstatus: approved\n---\nR1 — must work.'
+/** An approved round-1 review of APPROVED_REQ, digest computed by the contract itself. */
+function approvedReview(digest: string, over = ''): string {
+  return `---\nreviewer: subagent\nreviewed_version: 1\nreviewed_digest: ${digest}\nverdict: approved\nround: 1\nfindings: { high: 0, medium: 0, low: 0 }\n${over}---\nNo blocking finding.`
+}
+
+describe('review contract gate (comp-48)', () => {
+  it('requirements → design demands the contract and reports every reason', async () => {
+    const id = await seedComponent()
+    await scrum.updateItem(id, { requirements: 'R1 free text', requirementsReview: 'looks fine' })
+    const error = await scrum.advancePhase(id).catch((e: unknown) => e as Error)
+    expect(error).toMatchObject({ code: 'phase-gate' })
+    expect(error.message).toMatch(/`requirements` frontmatter/)
+    expect(error.message).toMatch(/`requirementsReview` frontmatter missing or malformed/)
+    expect(error.message).toMatch(/; /)
+
+    await scrum.updateItem(id, { requirements: APPROVED_REQ })
+    const digest = scrum.reviewBrief(id).requirements.digest
+    await scrum.updateItem(id, { requirementsReview: approvedReview(digest) })
+    expect((await scrum.advancePhase(id)).phase).toBe('design')
+  })
+
+  it('a retreat to requirements followed by an edit is barred until re-reviewed (R6)', async () => {
+    const id = await seedComponent()
+    await scrum.updateItem(id, { requirements: APPROVED_REQ })
+    await scrum.updateItem(id, { requirementsReview: approvedReview(scrum.reviewBrief(id).requirements.digest) })
+    await scrum.advancePhase(id)
+    await scrum.setPhase(id, 'requirements')
+    await scrum.updateItem(id, { requirements: APPROVED_REQ.replace('version: 1', 'version: 2').replace('must work', 'must work fast') })
+    await expect(scrum.advancePhase(id)).rejects.toThrow(/covers version 1 but `requirements` are at version 2/)
+    await expect(scrum.advancePhase(id)).rejects.toThrow(/text changed since the review/)
+  })
+
+  it('reviewContract(id) exposes the same verdict the gate uses (feedback before the gate)', async () => {
+    const id = await seedComponent()
+    await scrum.updateItem(id, { requirements: APPROVED_REQ, requirementsReview: 'draft' })
+    const early = scrum.reviewContract(id)
+    expect(early.ok).toBe(false)
+    await scrum.updateItem(id, { requirementsReview: approvedReview(scrum.reviewBrief(id).requirements.digest) })
+    expect(scrum.reviewContract(id)).toEqual({ ok: true })
+  })
+
+  it('reviewBrief returns the state the reviewer needs, and refuses by name when unreviewable', async () => {
+    const id = await seedComponent()
+    await expect(() => scrum.reviewBrief(id)).toThrow(/`requirements` is empty/)
+    await scrum.updateItem(id, { requirements: '---\nversion: 1\nstatus: approved\n---\n   ' })
+    expect(() => scrum.reviewBrief(id)).toThrow(/`requirements` body is empty/)
+    await scrum.updateItem(id, { requirements: '---\nversion: 1.5\n---\nbody' })
+    expect(() => scrum.reviewBrief(id)).toThrow(/frontmatter invalid/)
+    await scrum.updateItem(id, { requirements: 'no version here' })
+    const noVersion = (() => { try { scrum.reviewBrief(id); return null } catch (e) { return e as Error & { code: string } } })()
+    expect(noVersion).toMatchObject({ code: 'review-brief' })
+    expect(noVersion!.message).toMatch(/version/)
+
+    await scrum.updateItem(id, { requirements: APPROVED_REQ, design: 'erDiagram …' })
+    await scrum.createTask({ componentId: id, title: 't1' })
+    const first = scrum.reviewBrief(id)
+    expect(first.component.id).toBe(id)
+    expect(first.requirements).toMatchObject({ version: 1, status: 'approved', body: 'R1 — must work.' })
+    expect(first.requirements.digest).toMatch(/^[0-9a-f]{8}$/)
+    expect(first.previousReview).toBeUndefined()
+    // Design rides along only once the component is past requirements.
+    expect(first.design).toBeUndefined()
+    expect(first.taskCount).toBe(1)
+
+    await scrum.updateItem(id, { requirementsReview: approvedReview(first.requirements.digest) })
+    await scrum.advancePhase(id)
+    const second = scrum.reviewBrief(id)
+    expect(second.previousReview).toMatchObject({ meta: { verdict: 'approved', round: 1, reviewed_version: 1 } })
+    expect(second.design).toBe('erDiagram …')
+
+    const trashed = await seedComponent()
+    await scrum.deleteItem(trashed)
+    expect(() => scrum.reviewBrief(trashed)).toThrow(/in the trash/)
+  })
+})
+
+describe('review contract — the digest property (comp-48 R3, round-3 M-A)', () => {
+  it('R3: stamping status: approved AFTER the review does not invalidate it — brief → review → stamp → advance', async () => {
+    const id = await seedComponent()
+    // Draft requirements: versioned, not yet stamped by the human.
+    await scrum.updateItem(id, { requirements: '---\nversion: 1\nstatus: draft\n---\nR1 — must work.' })
+    const brief = scrum.reviewBrief(id)
+    expect(brief.requirements.status).toBe('draft')
+    await scrum.updateItem(id, { requirementsReview: approvedReview(brief.requirements.digest) })
+    // Still barred: only the stamp is missing (review is valid and current).
+    await expect(scrum.advancePhase(id)).rejects.toThrow(/status is draft \(needs approved\)/)
+    await expect(scrum.advancePhase(id)).rejects.not.toThrow(/text changed/)
+    // The human stamps the frontmatter only: same body, same digest, review still covers it.
+    await scrum.updateItem(id, { requirements: '---\nversion: 1\nstatus: approved\n---\nR1 — must work.' })
+    expect(scrum.reviewBrief(id).requirements.digest).toBe(brief.requirements.digest)
+    expect((await scrum.advancePhase(id)).phase).toBe('design')
   })
 })

@@ -4,6 +4,7 @@
  * loop dispatches them.
  */
 
+import { createHash } from 'node:crypto'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -17,6 +18,12 @@ import ToolRuntime from '@deepseek-ai/dsh-tools'
 import type { CallId } from '@deepseek-ai/dsh-tools'
 import { ScrumService } from '@scrum-harness/domain'
 import * as ToolScrum from '../src/index.ts'
+
+
+/** Approved v1 requirements + an approved review covering them (review contract of comp-48). */
+const REQ_BODY = 'R1 — must work.'
+const CONTRACT_REQ = `---\nversion: 1\nstatus: approved\n---\n${REQ_BODY}`
+const CONTRACT_REVIEW = `---\nreviewer: subagent\nreviewed_version: 1\nreviewed_digest: ${createHash('sha1').update(REQ_BODY).digest('hex').slice(0, 8)}\nverdict: approved\nround: 1\nfindings: { high: 0, medium: 0, low: 0 }\n---\nNo blocking finding.`
 
 let root: string
 let ctx: Context
@@ -200,7 +207,7 @@ describe('tool-scrum', () => {
     expect(blocked.text).toMatch(/requirements/)
 
     // Artifacts flow through scrum_item_update; the tree shows [status · phase].
-    await run('scrum_item_update', { id: 'comp-1', requirements: 'R1 …', requirementsReview: 'reviewed' })
+    await run('scrum_item_update', { id: 'comp-1', requirements: CONTRACT_REQ, requirementsReview: CONTRACT_REVIEW })
     const advanced = await run('scrum_component_phase', { id: 'comp-1', action: 'advance' })
     expect(advanced.isError).toBe(false)
     expect(advanced.text).toContain('comp-1 → design')
@@ -224,5 +231,46 @@ describe('tool-scrum', () => {
     const withPhase = await run('scrum_component_phase', { id: 'comp-1', action: 'advance', phase: 'design' })
     expect(withPhase.isError).toBe(true)
     expect(withPhase.text).toMatch(/advance/)
+  })
+
+  // ── v0.13: the review brief tool and the early contract warning (comp-48, R4/R7) ──
+
+  it('scrum_component_review_brief renders the brief from the component state, or refuses by name', async () => {
+    await run('scrum_release_create', { name: 'v1.0' })
+    await run('scrum_feature_create', { releaseId: 'rel-1', title: 'F' })
+    await run('scrum_component_create', { featureId: 'feat-1', title: 'Gate' })
+    expect(ctx.tools.schemas().map(s => s.name)).toContain('scrum_component_review_brief')
+
+    const empty = await run('scrum_component_review_brief', { id: 'comp-1' })
+    expect(empty.isError).toBe(true)
+    expect(empty.text).toMatch(/`requirements` is empty/)
+
+    await run('scrum_item_update', { id: 'comp-1', requirements: CONTRACT_REQ })
+    const brief = await run('scrum_component_review_brief', { id: 'comp-1' })
+    expect(brief.isError).toBe(false)
+    expect(brief.text).toMatch(/comp-1/)
+    expect(brief.text).toMatch(/House conventions/)
+    expect(brief.text).toMatch(/MVC/)
+    expect(brief.text).toMatch(/reviewed_version: 1/)
+    expect(brief.text).toMatch(/reviewed_digest: "[0-9a-f]{8}"/)
+    expect(brief.text).toMatch(new RegExp(REQ_BODY))
+  })
+
+  it('scrum_item_update warns about the review contract when it touches the artifacts (no blocking)', async () => {
+    await run('scrum_release_create', { name: 'v1.0' })
+    await run('scrum_feature_create', { releaseId: 'rel-1', title: 'F' })
+    await run('scrum_component_create', { featureId: 'feat-1', title: 'Gate' })
+
+    const draft = await run('scrum_item_update', { id: 'comp-1', requirements: CONTRACT_REQ, requirementsReview: 'draft notes' })
+    expect(draft.isError).toBe(false)
+    expect(draft.text).toMatch(/Updated comp-1/)
+    expect(draft.text).toMatch(/review contract: .*`requirementsReview` frontmatter missing or malformed.*will block requirements → design/)
+
+    const ok = await run('scrum_item_update', { id: 'comp-1', requirementsReview: CONTRACT_REVIEW })
+    expect(ok.text).toMatch(/review contract: ok/)
+
+    // Patches that do not touch the artifacts stay quiet.
+    const title = await run('scrum_item_update', { id: 'comp-1', title: 'Gate hard' })
+    expect(title.text).not.toMatch(/review contract/)
   })
 })

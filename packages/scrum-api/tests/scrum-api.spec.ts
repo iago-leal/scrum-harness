@@ -3,6 +3,7 @@
  * OS-assigned port over the real storage stack, driven with fetch.
  */
 
+import { createHash } from 'node:crypto'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -14,6 +15,12 @@ import * as StorageDomain from '@deepseek-ai/dsh-storage-domain'
 import WebServer from '@deepseek-ai/dsh-host-webserver'
 import { ScrumService } from '@scrum-harness/domain'
 import * as ScrumApi from '../src/index.ts'
+
+
+/** Approved v1 requirements + an approved review covering them (review contract of comp-48). */
+const REQ_BODY = 'R1 — must work.'
+const CONTRACT_REQ = `---\nversion: 1\nstatus: approved\n---\n${REQ_BODY}`
+const CONTRACT_REVIEW = `---\nreviewer: subagent\nreviewed_version: 1\nreviewed_digest: ${createHash('sha1').update(REQ_BODY).digest('hex').slice(0, 8)}\nverdict: approved\nround: 1\nfindings: { high: 0, medium: 0, low: 0 }\n---\nNo blocking finding.`
 
 let root: string
 let ctx: Context
@@ -210,10 +217,10 @@ describe('scrum-api', () => {
     // The four artifacts through updateItem; '' deletes.
     const filled = await act({
       action: 'updateItem', id: 'comp-1',
-      requirements: '---\nphase: requirements\n---\nR1', requirementsReview: 'ok', design: 'D', validation: 'V',
+      requirements: CONTRACT_REQ, requirementsReview: CONTRACT_REVIEW, design: 'D', validation: 'V',
     })
     expect(filled.status).toBe(200)
-    expect(filled.json.result).toMatchObject({ requirements: '---\nphase: requirements\n---\nR1', design: 'D' })
+    expect(filled.json.result).toMatchObject({ requirements: CONTRACT_REQ, design: 'D' })
     const cleared = await act({ action: 'updateItem', id: 'comp-1', validation: '' })
     expect('validation' in cleared.json.result).toBe(false)
 
@@ -222,7 +229,7 @@ describe('scrum-api', () => {
     expect(advanced.json.result).toMatchObject({ phase: 'design', status: 'in_progress' })
     expect(advanced.json.result.phaseLog).toHaveLength(1)
     const component = advanced.json.state.tree.releases[0].features[0].components[0]
-    expect(component).toMatchObject({ phase: 'design', requirementsReview: 'ok' })
+    expect(component).toMatchObject({ phase: 'design', requirementsReview: CONTRACT_REVIEW })
 
     const back = await act({ action: 'componentPhase', id: 'comp-1', op: 'set', phase: 'requirements' })
     expect(back.json.result.phase).toBe('requirements')

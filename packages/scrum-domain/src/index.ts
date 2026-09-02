@@ -12,5 +12,6 @@ export * from './boards.ts'
 export * from './service.ts'
 export * from './format.ts'
 export * from './frontmatter.ts'
+export * from './contracts.ts'
 
 export default ScrumService
