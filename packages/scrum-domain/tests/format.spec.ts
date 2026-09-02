@@ -88,12 +88,12 @@ describe('formatReviewBrief', () => {
 })
 
 describe('formatTree review-stale marker (R5)', () => {
-  const tree = (comp: Component): ScrumTree => ({
+  const tree = (comp: Component, ready = false): ScrumTree => ({
     releases: [{
       id: 'rel-1', name: 'R', status: 'active', order: 0, createdAt: '', updatedAt: '',
       features: [{
         id: 'feat-1', releaseId: 'rel-1', title: 'F', status: 'in_progress', order: 0, createdAt: '', updatedAt: '',
-        components: [{ ...comp, tasks: [] }],
+        components: [{ ...comp, tasks: [], readyForDone: ready }],
       }],
     }],
   })
@@ -113,5 +113,25 @@ describe('formatTree review-stale marker (R5)', () => {
     expect(formatTree(tree(component({ requirements: req, requirementsReview: 'ALTA A1 …' })))).not.toMatch(/stale/)
     expect(formatTree(tree(component({ status: 'done', phase: 'validation', requirements: req, requirementsReview: review(1, DIGEST) }))))
       .not.toMatch(/stale/)
+  })
+})
+
+describe('formatTree ready-for-done marker (comp-47 R7)', () => {
+  const tree = (comp: Component, ready: boolean): ScrumTree => ({
+    releases: [{
+      id: 'rel-1', name: 'R', status: 'active', order: 0, createdAt: '', updatedAt: '',
+      features: [{
+        id: 'feat-1', releaseId: 'rel-1', title: 'F', status: 'in_progress', order: 0, createdAt: '', updatedAt: '',
+        components: [{ ...comp, tasks: [], readyForDone: ready }],
+      }],
+    }],
+  })
+
+  it('R7: renders the Model\'s boolean and nothing else', () => {
+    expect(formatTree(tree(component({ phase: 'validation' }), true)))
+      .toMatch(/comp-7 Gate hard de done \[in_progress · validation · ready for done\]/)
+    expect(formatTree(tree(component({ phase: 'validation' }), false))).not.toMatch(/ready for done/)
+    // The Model never marks done components ready; the View would print whatever it got.
+    expect(formatTree(tree(component({ status: 'done', phase: 'validation' }), false))).not.toMatch(/ready/)
   })
 })

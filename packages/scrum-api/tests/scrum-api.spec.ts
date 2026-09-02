@@ -236,4 +236,18 @@ describe('scrum-api', () => {
     const bad = await act({ action: 'componentPhase', id: 'comp-1', op: 'set', phase: 'nowhere' })
     expect(bad.status).toBe(400)
   })
+
+  // ── comp-47: the done gate over the wire ──
+
+  it('refuses status done with 409 done-gate and the reasons; readyForDone rides the tree', async () => {
+    await act({ action: 'createRelease', name: 'v1.0' })
+    await act({ action: 'createFeature', releaseId: 'rel-1', title: 'F' })
+    await act({ action: 'createComponent', featureId: 'feat-1', title: 'C' })
+    const refused = await act({ action: 'updateItem', id: 'comp-1', status: 'done' })
+    expect(refused.status).toBe(409)
+    expect(refused.json.code).toBe('done-gate')
+    expect(refused.json.message).toMatch(/needs validation/)
+    const state = await (await fetch(`${base}/scrum-api/state`)).json()
+    expect(state.state.tree.releases[0].features[0].components[0].readyForDone).toBe(false)
+  })
 })

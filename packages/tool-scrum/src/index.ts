@@ -156,10 +156,10 @@ export function apply(ctx: Context): void {
       requirements: { type: 'string', description: 'Components only: the requirements artifact — markdown with a YAML frontmatter on line 1 carrying `version: <int ≥ 1>` and, once the human approved them, `status: approved`. Gate requirements → design.' },
       requirementsReview: { type: 'string', description: 'Components only: the adversarial review — markdown with frontmatter { reviewer, reviewed_version, reviewed_digest, verdict: approved|needs-revision, round, findings: { high, medium, low } } (get it pre-filled from scrum_component_review_brief). The gate needs verdict approved with findings.high 0, covering the current requirements version and digest.' },
       design: { type: 'string', description: 'Components only: the design artifact (text + mermaid). Gate design → tdd.' },
-      validation: { type: 'string', description: 'Components only: validation evidence (suite duration, checks, traces). Required for done.' },
+      validation: { type: 'string', description: 'Components only: validation evidence — markdown with frontmatter { validated_at: "<ISO date>", suite: { tests, passed, skipped?, wall_seconds, budget_seconds ≤ 15 }, typecheck: clean } and a body (what was checked and how). Gate for status done.' },
       estimate: { type: 'number', description: 'Tasks only.' },
       targetDate: { type: 'string', description: 'Releases only (ISO date).' },
-      status: { type: 'string', description: 'Releases, features and components (each level has its own workflow).' },
+      status: { type: 'string', description: 'Releases, features and components (each level has its own workflow). Component `done` is gated: phase validation, every task done, and a `validation` artifact honoring its contract — a refusal names every missing condition.' },
       goal: { type: 'string', description: 'Sprints only.' },
       releaseId: { type: 'string', description: 'Sprints only: shortcut for releaseIds with ONE release (rel-N); empty string removes every link.' },
       releaseIds: {
@@ -184,15 +184,18 @@ export function apply(ctx: Context): void {
       const board = await boardOf(exec)
       const { id, ...patch } = args
       await board.updateItem(id, patch as Parameters<typeof board.updateItem>[1])
-      // Early feedback on the review contract (comp-48 R7): warn, never block.
+      // Early feedback on the artifact contracts (comp-48 R7, comp-47 R6): warn, never block —
+      // one line per contract the patch touched.
+      const notes: string[] = []
       if (id.startsWith('comp-') && (args.requirements !== undefined || args.requirementsReview !== undefined)) {
         const contract = board.reviewContract(id)
-        const verdict = contract.ok
-          ? 'ok'
-          : `${contract.reasons.join('; ')} — will block requirements → design`
-        return { text: `Updated ${id}. review contract: ${verdict}` }
+        notes.push(`review contract: ${contract.ok ? 'ok' : `${contract.reasons.join('; ')} — will block requirements → design`}`)
       }
-      return { text: `Updated ${id}.` }
+      if (id.startsWith('comp-') && args.validation !== undefined) {
+        const contract = board.validationContract(id)
+        notes.push(`validation contract: ${contract.ok ? 'ok' : `${contract.reasons.join('; ')} — will block status done`}`)
+      }
+      return { text: notes.length === 0 ? `Updated ${id}.` : `Updated ${id}. ${notes.join(' | ')}` }
     },
     presentCall: args => ({ card: 'generic', title: `Update ${args.id}`, kind: 'edit' }),
   }))

@@ -168,3 +168,72 @@ describe('ReviewContract (R2 c–f, R5)', () => {
     expect(c.check(comp({ requirements, requirementsReview: quoted }))).toEqual({ ok: true })
   })
 })
+
+// ── comp-47: the validation artifact behind the done gate ─────────────────
+import { DEFAULT_SUITE_BUDGET_SECONDS, ValidationContract } from '../src/contracts.ts'
+
+/** A validation frontmatter with overrides; body follows. */
+function validation(over: Record<string, unknown> = {}, body = 'Suite green, tsc clean, bundle served.'): string {
+  const meta: Record<string, unknown> = {
+    validated_at: '2026-09-02', suite: '{ tests: 97, passed: 97, wall_seconds: 12, budget_seconds: 15 }',
+    typecheck: 'clean', ...over,
+  }
+  const lines = Object.entries(meta).filter(([, v]) => v !== undefined).map(([k, v]) => `${k}: ${String(v)}`)
+  return `---\n${lines.join('\n')}\n---\n${body}`
+}
+
+describe('ValidationContract (comp-47 R1, R2)', () => {
+  const c = new ValidationContract()
+  const reasons = (text: string, contract = c): string[] => {
+    const result = contract.check(comp({ validation: text }))
+    return result.ok ? [] : result.reasons
+  }
+
+  it('R1: accepts a complete, consistent artifact; skipped defaults to 0; the default budget is 15s', () => {
+    expect(DEFAULT_SUITE_BUDGET_SECONDS).toBe(15)
+    expect(c.check(comp({ validation: validation() }))).toEqual({ ok: true })
+    expect(c.check(comp({ validation: validation({ suite: '{ tests: 10, passed: 8, skipped: 2, wall_seconds: 1, budget_seconds: 15 }' }) })))
+      .toEqual({ ok: true })
+    expect(c.check(comp({ validation: validation().replaceAll('\n', '\r\n') }))).toEqual({ ok: true })
+  })
+
+  it('R1: names missing fields with their path; tests must be ≥ 1', () => {
+    expect(reasons(validation({ suite: '{ tests: 97, passed: 97 }' })).join()).toMatch(/suite\.wall_seconds/)
+    expect(reasons(validation({ suite: '{ tests: 97, passed: 97 }' })).join()).toMatch(/suite\.budget_seconds/)
+    expect(reasons(validation({ typecheck: undefined })).join()).toMatch(/typecheck/)
+    expect(reasons(validation({ suite: '{ tests: 0, passed: 0, wall_seconds: 0, budget_seconds: 15 }' })).join()).toMatch(/suite\.tests/)
+    expect(reasons('no frontmatter at all').join()).toMatch(/`validation` frontmatter missing or malformed/)
+  })
+
+  it('R1: cross rules — passed + skipped = tests, typecheck clean, wall ≤ budget_seconds ≤ board budget', () => {
+    expect(reasons(validation({ suite: '{ tests: 97, passed: 96, wall_seconds: 12, budget_seconds: 15 }' })).join())
+      .toMatch(/suite\.passed 96 \+ skipped 0 ≠ tests 97/)
+    expect(reasons(validation({ typecheck: 'failing' })).join()).toMatch(/typecheck is failing \(needs clean\)/)
+    expect(reasons(validation({ suite: '{ tests: 97, passed: 97, wall_seconds: 16.2, budget_seconds: 15 }' })).join())
+      .toMatch(/suite\.wall_seconds 16\.2 > budget_seconds 15/)
+    expect(reasons(validation({ suite: '{ tests: 97, passed: 97, wall_seconds: 12, budget_seconds: 99999 }' })).join())
+      .toMatch(/suite\.budget_seconds 99999 > board budget 15/)
+    // Every violated rule at once.
+    const all = reasons(validation({ suite: '{ tests: 97, passed: 90, wall_seconds: 30, budget_seconds: 20 }', typecheck: 'errors' }))
+    expect(all.length).toBeGreaterThanOrEqual(4)
+  })
+
+  it('R2: the board budget is injectable (comp-50 will feed it per board)', () => {
+    const wide = new ValidationContract({ budgetSeconds: 60 })
+    expect(wide.check(comp({ validation: validation({ suite: '{ tests: 1, passed: 1, wall_seconds: 50, budget_seconds: 60 }' }) })))
+      .toEqual({ ok: true })
+    expect(reasons(validation({ suite: '{ tests: 1, passed: 1, wall_seconds: 50, budget_seconds: 60 }' }), c).join())
+      .toMatch(/budget_seconds 60 > board budget 15/)
+  })
+
+  it('R1: validated_at must be an ISO-8601 date; a bare all-digit value must be quoted', () => {
+    expect(reasons(validation({ validated_at: 'Jan 5' })).join()).toMatch(/validated_at must be a quoted ISO-8601 date/)
+    expect(reasons(validation({ validated_at: '2026' })).join()).toMatch(/validated_at must be a quoted ISO-8601 date/)
+    expect(c.check(comp({ validation: validation({ validated_at: '"2026-09-02T10:00:00Z"' }) }))).toEqual({ ok: true })
+    expect(c.check(comp({ validation: validation({ validated_at: '2026-09-02T10:00:00.000Z' }) }))).toEqual({ ok: true })
+  })
+
+  it('R1: a frontmatter-only artifact is not evidence', () => {
+    expect(reasons(validation({}, '   ')).join()).toMatch(/`validation` body is empty \(only frontmatter\)/)
+  })
+})

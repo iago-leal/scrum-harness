@@ -273,4 +273,27 @@ describe('tool-scrum', () => {
     const title = await run('scrum_item_update', { id: 'comp-1', title: 'Gate hard' })
     expect(title.text).not.toMatch(/review contract/)
   })
+
+  // ── comp-47: the done gate through the tool (R6) — written before the code ──
+
+  it('R6: scrum_item_update warns about the validation contract and refuses done with every reason', async () => {
+    await run('scrum_release_create', { name: 'v1.0' })
+    await run('scrum_feature_create', { releaseId: 'rel-1', title: 'F' })
+    await run('scrum_component_create', { featureId: 'feat-1', title: 'Gate' })
+
+    const draft = await run('scrum_item_update', { id: 'comp-1', validation: 'evidence without frontmatter' })
+    expect(draft.isError).toBe(false)
+    expect(draft.text).toMatch(/validation contract: .*`validation` frontmatter missing or malformed/)
+
+    // Both contracts touched in one patch → one line each.
+    const both = await run('scrum_item_update', { id: 'comp-1', requirements: CONTRACT_REQ, validation: 'still no frontmatter' })
+    expect(both.text).toMatch(/review contract: /)
+    expect(both.text).toMatch(/validation contract: /)
+
+    const done = await run('scrum_item_update', { id: 'comp-1', status: 'done' })
+    expect(done.isError).toBe(true)
+    expect(done.text).toMatch(/phase is requirements \(needs validation\)/)
+    expect(done.text).toMatch(/no task under the component/)
+    expect(done.text).toMatch(/cannot set status done/)
+  })
 })

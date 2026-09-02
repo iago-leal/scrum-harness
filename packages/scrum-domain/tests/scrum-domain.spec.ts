@@ -98,7 +98,9 @@ describe('workflows (multi-level states)', () => {
 
     const started = await scrum.updateItem(componentId, { status: 'in_progress' })
     expect(started).toMatchObject({ status: 'in_progress' })
-    const finished = await scrum.updateItem(componentId, { status: 'done' })
+    // Since comp-47, `done` only through the spiral's exit gate (see 'done gate').
+    await toValidation(componentId)
+    const finished = await scrum.updateItem(componentId, { status: 'done', validation: VALID_VALIDATION })
     expect(finished).toMatchObject({ status: 'done' })
 
     await expect(scrum.updateItem(componentId, { status: 'committed' }))
@@ -622,7 +624,8 @@ describe('spiral phases (R1, R2, R7)', () => {
 
   it('refuses setPhase on a done component and on shelved ones (R7)', async () => {
     const id = await seedComponent()
-    await scrum.updateItem(id, { status: 'done' })
+    await toValidation(id)
+    await scrum.updateItem(id, { status: 'done', validation: VALID_VALIDATION })
     await expect(scrum.setPhase(id, 'requirements')).rejects.toMatchObject({ code: 'phase-gate' })
 
     const trashed = await seedComponent()
@@ -812,5 +815,98 @@ describe('review contract — the digest property (comp-48 R3, round-3 M-A)', ()
     await scrum.updateItem(id, { requirements: '---\nversion: 1\nstatus: approved\n---\nR1 — must work.' })
     expect(scrum.reviewBrief(id).requirements.digest).toBe(brief.requirements.digest)
     expect((await scrum.advancePhase(id)).phase).toBe('design')
+  })
+})
+
+// ── comp-47: the done gate (R3, R4, R5) — written before the code ─────────
+
+const VALID_VALIDATION = '---\nvalidated_at: 2026-09-02\nsuite: { tests: 97, passed: 97, wall_seconds: 12, budget_seconds: 15 }\ntypecheck: clean\n---\nSuite green, tsc clean.'
+
+/** Carry a component to `validation` with one finished task (through every gate). */
+async function toValidation(id: string) {
+  const task = await toTdd(id)
+  await scrum.advancePhase(id)
+  await finish([task.id])
+  await scrum.advancePhase(id)
+  return task
+}
+
+describe('done gate (comp-47)', () => {
+  it('R3: status done is refused outside validation, without finished tasks, or without the validation contract — all reasons named', async () => {
+    const id = await seedComponent()
+    const error = await scrum.updateItem(id, { status: 'done' }).catch((e: unknown) => e as Error & { code: string })
+    expect(error).toMatchObject({ code: 'done-gate' })
+    expect(error.message).toMatch(/phase is requirements \(needs validation\)/)
+    expect(error.message).toMatch(/no task under the component/)
+    expect(error.message).toMatch(/`validation` is empty/)
+    expect(error.message).toMatch(/; /)
+    expect(componentOf(id).status).toBe('proposed')
+  })
+
+  it('R3: accepts done in validation with every task done and a valid artifact; done → done is a no-op', async () => {
+    const id = await seedComponent()
+    await toValidation(id)
+    await expect(scrum.updateItem(id, { status: 'done' })).rejects.toThrow(/`validation` is empty/)
+    await scrum.updateItem(id, { validation: VALID_VALIDATION })
+    const done = await scrum.updateItem(id, { status: 'done' })
+    expect(done).toMatchObject({ status: 'done', phase: 'validation' })
+    expect((await scrum.updateItem(id, { status: 'done' })).status).toBe('done')
+  })
+
+  it('R3: the gate sees the NEXT state — artifact and status in the same patch', async () => {
+    const id = await seedComponent()
+    await toValidation(id)
+    const done = await scrum.updateItem(id, { status: 'done', validation: VALID_VALIDATION })
+    expect(done.status).toBe('done')
+    const other = await seedComponent()
+    await toValidation(other)
+    await expect(scrum.updateItem(other, { status: 'done', validation: VALID_VALIDATION.replace('passed: 97', 'passed: 90') }))
+      .rejects.toThrow(/suite\.passed 90/)
+  })
+
+  it('R5: only the transition is gated — a done component stays done; retreating and coming back is gated again', async () => {
+    const id = await seedComponent()
+    await toValidation(id)
+    await scrum.updateItem(id, { status: 'done', validation: VALID_VALIDATION })
+    // Other edits on a done component never re-run the gate.
+    expect((await scrum.updateItem(id, { title: 'renamed' })).status).toBe('done')
+    // A new (not done) task after done does not undo done…
+    await scrum.createTask({ componentId: id, title: 'follow-up' })
+    expect(componentOf(id).status).toBe('done')
+    // …but retreating to in_progress and coming back is barred by that open task.
+    await scrum.updateItem(id, { status: 'in_progress' })
+    await expect(scrum.updateItem(id, { status: 'done' })).rejects.toThrow(/1 task\(s\) not done/)
+  })
+
+  it('R4: doneReadiness(id) is the gate\'s own verdict; shelved components refuse', async () => {
+    const id = await seedComponent()
+    const early = scrum.doneReadiness(id)
+    expect(early.ok).toBe(false)
+    const message = await scrum.updateItem(id, { status: 'done' }).catch((e: Error) => e.message)
+    for (const reason of (early as { reasons: string[] }).reasons) expect(message).toContain(reason)
+
+    await toValidation(id)
+    await scrum.updateItem(id, { validation: VALID_VALIDATION })
+    expect(scrum.doneReadiness(id)).toEqual({ ok: true })
+    expect(scrum.validationContract(id)).toEqual({ ok: true })
+
+    const trashed = await seedComponent()
+    await scrum.deleteItem(trashed)
+    expect(() => scrum.doneReadiness(trashed)).toThrow(/in the trash/)
+    expect(() => scrum.validationContract(trashed)).toThrow(/in the trash/)
+  })
+
+  it('R4: tree() annotates readyForDone in the Model — archived done tasks count, done components are never ready', async () => {
+    const id = await seedComponent()
+    await toValidation(id)
+    await scrum.archiveCompleted()
+    expect(componentOf(id).readyForDone).toBe(false)
+    await scrum.updateItem(id, { validation: VALID_VALIDATION })
+    // The tree hides the archived task, yet readiness (Model) still counts it.
+    expect(componentOf(id).tasks).toHaveLength(0)
+    expect(componentOf(id).readyForDone).toBe(true)
+    await scrum.updateItem(id, { status: 'done' })
+    expect(componentOf(id).readyForDone).toBe(false)
+    expect(componentOf(await seedComponent()).readyForDone).toBe(false)
   })
 })

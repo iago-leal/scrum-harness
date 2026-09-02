@@ -79,8 +79,11 @@ export abstract class ArtifactContract<M> {
       const where = path.length === 0 ? 'frontmatter' : `frontmatter: ${path}`
       // H1 (round 2): the house YAML parser turns bare all-digit values into
       // numbers, so a digest like 00123456 must travel quoted.
-      if (path === 'reviewed_digest' && issue.code === 'invalid_type' && issue.message.includes('received number')) {
-        return `\`${this.field}\` ${where} must be a quoted string (write reviewed_digest: "…" — bare digits are parsed as a number)`
+      if (issue.code === 'invalid_type' && issue.message.includes('received number')) {
+        if (path === 'reviewed_digest') {
+          return `\`${this.field}\` ${where} must be a quoted string (write reviewed_digest: "…" — bare digits are parsed as a number)`
+        }
+        if (path === 'validated_at') return `\`${this.field}\` ${where} must be a quoted ISO-8601 date (bare digits are parsed as a number)`
       }
       return `\`${this.field}\` ${where} ${describe(issue)}`
     })
@@ -106,6 +109,8 @@ export abstract class ArtifactContract<M> {
 function describe(issue: z.core.$ZodIssue): string {
   if (issue.code === 'invalid_type' && issue.message.includes('received undefined')) return 'missing'
   if (issue.code === 'invalid_value') return `must be one of ${(issue as { values: unknown[] }).values.map(String).join(', ')}`
+  // Refinement messages are ours: keep their casing.
+  if (issue.code === 'custom') return issue.message
   return issue.message.toLowerCase()
 }
 
@@ -203,5 +208,67 @@ export class ReviewContract extends ArtifactContract<ReviewMeta> {
     const current = this.requirements.meta(component).meta
     if (current !== null && review.reviewed_version !== current.version) return true
     return review.reviewed_digest !== this.requirements.digest(component)
+  }
+}
+
+// ── comp-47: the validation artifact behind the done gate ─────────────────
+
+/** The board-wide ceiling for the declared suite budget (comp-50 will make it per board). */
+export const DEFAULT_SUITE_BUDGET_SECONDS = 15
+
+/** ISO-8601 date or date-time (the shapes `validated_at` may take). */
+const ISO_DATE = /^\d{4}-\d{2}-\d{2}(T\d{2}:\d{2}(:\d{2}(\.\d+)?)?(Z|[+-]\d{2}:\d{2})?)?$/
+
+/** Frontmatter of the validation artifact (R1). */
+export const validationMetaSchema = z.object({
+  validated_at: z.string().refine(v => ISO_DATE.test(v) && Number.isFinite(Date.parse(v)), 'must be a quoted ISO-8601 date'),
+  suite: z.object({
+    tests: z.number().int().min(1),
+    passed: z.number().int().min(0),
+    skipped: z.number().int().min(0).default(0),
+    wall_seconds: z.number().min(0),
+    budget_seconds: z.number().gt(0),
+  }),
+  typecheck: z.string(),
+})
+export type ValidationMeta = z.infer<typeof validationMetaSchema>
+
+/**
+ * The validation artifact: the evidence a component's `done` rests on —
+ * a green suite (skipped tolerated, counted), a clean typecheck, and a wall
+ * time inside a declared budget that cannot exceed the board's ceiling.
+ */
+export class ValidationContract extends ArtifactContract<ValidationMeta> {
+  /** The board's budget ceiling, injected per board (defaults to the domain constant). */
+  readonly budgetSeconds: number
+
+  /**
+   * @param options - `budgetSeconds` overrides {@link DEFAULT_SUITE_BUDGET_SECONDS}.
+   */
+  constructor(options: { budgetSeconds?: number } = {}) {
+    super('validation', validationMetaSchema)
+    this.budgetSeconds = options.budgetSeconds ?? DEFAULT_SUITE_BUDGET_SECONDS
+  }
+
+  /** Schema issues, then the cross rules of R1, then the body — every violation at once. */
+  check(component: Component): ContractResult {
+    const reasons: string[] = []
+    const { meta, issues } = this.meta(component)
+    if (meta === null) reasons.push(...issues)
+    else {
+      const { suite } = meta
+      if (suite.passed + suite.skipped !== suite.tests) {
+        reasons.push(`\`validation\` frontmatter: suite.passed ${suite.passed} + skipped ${suite.skipped} ≠ tests ${suite.tests}`)
+      }
+      if (meta.typecheck !== 'clean') reasons.push(`\`validation\` frontmatter: typecheck is ${meta.typecheck} (needs clean)`)
+      if (suite.wall_seconds > suite.budget_seconds) {
+        reasons.push(`\`validation\` frontmatter: suite.wall_seconds ${suite.wall_seconds} > budget_seconds ${suite.budget_seconds}`)
+      }
+      if (suite.budget_seconds > this.budgetSeconds) {
+        reasons.push(`\`validation\` frontmatter: suite.budget_seconds ${suite.budget_seconds} > board budget ${this.budgetSeconds}`)
+      }
+      if (this.body(component).length === 0) reasons.push('`validation` body is empty (only frontmatter)')
+    }
+    return reasons.length === 0 ? { ok: true } : { ok: false, reasons }
   }
 }

@@ -35,6 +35,8 @@ export interface WireComponent {
   validation?: string
   /** Append-only trail of phase movements. */
   phaseLog: { from: WirePhase; to: WirePhase; at: string }[]
+  /** Computed by the Model (comp-47): not done and the done gate satisfied. */
+  readyForDone: boolean
   tasks: WireTask[]
 }
 

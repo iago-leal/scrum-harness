@@ -17,7 +17,7 @@
 import { Context, Service } from '@deepseek-ai/cordis'
 import type { Domain, TableKeyOf, TableValueOf } from '@deepseek-ai/dsh-storage-domain'
 import { boardNameOf } from './boards.ts'
-import { ReviewContract } from './contracts.ts'
+import { ReviewContract, ValidationContract } from './contracts.ts'
 import type { ContractResult, ReviewMeta } from './contracts.ts'
 import {
   BOARD_COLUMNS,
@@ -161,7 +161,8 @@ export interface RecordCeremonyInput {
 export interface ScrumTree {
   releases: (Release & {
     features: (Feature & {
-      components: (Component & { tasks: Task[] })[]
+      /** `readyForDone` (comp-47): computed in the Model — status not done and the done gate satisfied. */
+      components: (Component & { tasks: Task[]; readyForDone: boolean })[]
     })[]
   })[]
 }
@@ -360,6 +361,7 @@ export class ScrumBoard {
                 .map(component => ({
                   ...component,
                   tasks: tasks.filter(t => t.componentId === component.id).sort(byOrder),
+                  readyForDone: component.status !== 'done' && this.doneGate(component).length === 0,
                 })),
             })),
         })),
@@ -504,6 +506,14 @@ export class ScrumBoard {
           if (value === undefined) continue
           if (value === '') delete next[field]
           else next[field] = value
+        }
+        // The done gate (comp-47): only the transition INTO done, evaluated on
+        // the next state (artifacts of this very patch already applied).
+        if (current.status !== 'done' && next.status === 'done') {
+          const reasons = this.doneGate(next)
+          if (reasons.length > 0) {
+            throw new ScrumError('done-gate', `${id}: ${reasons.join('; ')} — cannot set status done`)
+          }
         }
         return next
       })
@@ -683,6 +693,49 @@ export class ScrumBoard {
       ...pastRequirements && filled(component.design) ? { design: component.design } : {},
       taskCount: this.tasksOf(id).length,
     }
+  }
+
+  /**
+   * The conditions for a component to become `done` (comp-47): phase
+   * validation, at least one non-trashed task and all of them done, and a
+   * validation artifact honoring its contract. One source of truth — the
+   * gate in `updateItem`, `doneReadiness` and the tree's `readyForDone` all
+   * read this.
+   * @param component - the component as the caller sees it (next state inside the mutator).
+   * @returns every violated condition, in order; empty when ready.
+   */
+  private doneGate(component: Component): string[] {
+    const reasons: string[] = []
+    if (component.phase !== 'validation') reasons.push(`phase is ${component.phase} (needs validation)`)
+    const tasks = this.tasksOf(component.id)
+    if (tasks.length === 0) reasons.push('no task under the component')
+    else {
+      const open = tasks.filter(t => t.status !== 'done')
+      if (open.length > 0) reasons.push(`${open.length} task(s) not done (${open.map(t => t.id).join(', ')})`)
+    }
+    const contract = new ValidationContract().check(component)
+    if (!contract.ok) reasons.push(...contract.reasons)
+    return reasons
+  }
+
+  /**
+   * Whether a component could become `done` right now — the gate's own
+   * verdict, exposed so callers can warn before the gate refuses.
+   * @param id - component id.
+   * @returns ok, or every violated condition.
+   */
+  doneReadiness(id: string): ContractResult {
+    const reasons = this.doneGate(this.mustGetLive('components', id))
+    return reasons.length === 0 ? { ok: true } : { ok: false, reasons }
+  }
+
+  /**
+   * The validation contract's verdict on one component's artifact.
+   * @param id - component id.
+   * @returns ok, or every violated condition.
+   */
+  validationContract(id: string): ContractResult {
+    return new ValidationContract().check(this.mustGetLive('components', id))
   }
 
   /** The component's tasks that count for phase gates: everything not in the trash. */
