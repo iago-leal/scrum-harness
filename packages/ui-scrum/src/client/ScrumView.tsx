@@ -18,6 +18,7 @@ import type { BoardLevel, ScrumView as SectionView } from './store.ts'
 import { THEME_KEY } from './store.ts'
 import { Board } from './Board.tsx'
 import { resolveNode, WorkItemForm } from './Details.tsx'
+import type { MermaidEngine } from './mermaid-engine.ts'
 import type { RunOutcome } from './settle.ts'
 import { Shelf } from './Shelf.tsx'
 import { Sprints } from './Sprints.tsx'
@@ -37,6 +38,8 @@ export interface ScrumViewInjected {
    * (board drag, inline creation) keep ignoring it.
    */
   run: (action: Record<string, unknown>, workspace: string | null) => Promise<RunOutcome>
+  /** The page's mermaid engine (comp-44 R7): built once in index.ts, rendered by the work item form. */
+  engine: MermaidEngine
 }
 
 /** Minimal structural view of one workspace row (the wire type lives host-side). */
@@ -179,6 +182,8 @@ export function ScrumView(props: ScrumViewProps) {
             node={selectedNode}
             run={run}
             onClose={() => { props.actions.setSelected(null) }}
+            engine={props.engine}
+            theme={theme}
           />
         )}
       </div>

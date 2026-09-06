@@ -27,6 +27,13 @@ await build({
   jsx: 'automatic',
   // Primer token stylesheets (@primer/primitives) ride the bundle as strings.
   loader: { '.css': 'text' },
+  // comp-44 R7 (measured): the mermaid engine is embedded in this single CJS
+  // file — the platform has no lazy-load for plugin bundles, and the loader
+  // takes exactly one file. Minified it costs 3.79 MB / 1.01 MB gz; unminified
+  // 7.93 MB / 1.44 MB gz. On the pre-mermaid bundle minify only saved 14%
+  // (the bulk is the Primer CSS as a string) and left the .map unchanged.
+  // banner/footer stay verbatim and require/module/exports are never mangled.
+  minify: true,
   sourcemap: true,
   external: EXTERNALS,
   define: { 'process.env.NODE_ENV': '"production"' },

@@ -31,6 +31,7 @@
     "@deepseek-ai/cordis": "*"
   },
   "devDependencies": {
-    "@primer/primitives": "^11.10.0"
+    "@primer/primitives": "^11.10.0",
+    "mermaid": "^11.16.0"
   }
 }

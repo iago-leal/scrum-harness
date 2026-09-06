@@ -387,6 +387,39 @@ button.scrum-chev:hover { background: var(--bgColor-neutral-muted, rgba(70, 90, 
   background: var(--bgColor-default, #fff); color: var(--fgColor-default, #1d1f24);
 }
 .scrum-artifact textarea:focus { outline: 1px solid var(--focus-outlineColor, #9db9f2); outline-offset: -1px; }
+/* comp-44: the Diagramas faixa and the rendered blocks, between summary and textarea. */
+.scrum-diagrams-bar {
+  display: flex; align-items: center; gap: 8px; padding: 4px 10px; font-size: 12px;
+  background: var(--bgColor-muted, #f6f8fa); color: var(--fgColor-default, #1d1f24);
+  border-bottom: 1px solid var(--borderColor-default, #d0d7de);
+}
+.scrum-diagrams-count { font-weight: 600; }
+.scrum-diagrams-draft {
+  padding: 0 6px; border-radius: 10px; font-size: 11px; font-weight: 600;
+  background: var(--bgColor-attention-muted, #fff8c5); color: var(--fgColor-attention, #9a6700);
+}
+.scrum-diagrams-unavailable { color: var(--fgColor-danger, #d1242f); }
+.scrum-diagrams-bar .scrum-btn { padding: 1px 8px; font-size: 11px; }
+.scrum-diagrams { display: flex; flex-direction: column; gap: 8px; padding: 8px 10px; background: var(--bgColor-default, #fff); border-bottom: 1px solid var(--borderColor-default, #d0d7de); }
+.scrum-diagram { margin: 0; min-width: 0; border: 1px solid var(--borderColor-muted, #d8dee4); border-radius: var(--borderRadius-medium, 6px); }
+.scrum-diagram > figcaption {
+  padding: 3px 8px; font-size: 11px; font-weight: 600; color: var(--fgColor-muted, #59636e);
+  background: var(--bgColor-muted, #f6f8fa); border-bottom: 1px solid var(--borderColor-muted, #d8dee4);
+  font-family: var(--fontStack-monospace, ui-monospace, monospace);
+}
+/* The one scroll container: both axes, capped height, the svg free to be wider than the form (r2 M6).
+   mermaid emits width="100%" + max-width: <natural>px, which SHRINKS a wide diagram to the form; the
+   inner wrapper carries the viewBox width inline (svgNaturalWidth), so the svg renders 1:1 and scrolls. */
+.scrum-diagram-svg { width: 100%; max-height: 420px; overflow: auto; padding: 8px; box-sizing: border-box; }
+.scrum-diagram-natural { max-width: none; }
+.scrum-diagram-svg svg { max-width: none; height: auto; display: block; }
+.scrum-diagram-loading { padding: 8px; font-size: 12px; }
+.scrum-diagram-error {
+  margin: 0; padding: 8px; font-size: 12px; white-space: pre-wrap; word-break: break-word;
+  font-family: var(--fontStack-monospace, ui-monospace, monospace);
+  background: var(--bgColor-danger-muted, #ffebe9); color: var(--fgColor-danger, #d1242f);
+}
+.scrum-diagram.is-error { border-color: var(--borderColor-danger-muted, #ff818266); }
 .scrum-history-list { margin: 0; padding: 6px 10px 6px 28px; font-size: 12px; font-family: var(--fontStack-monospace, ui-monospace, monospace); }
 .scrum-history-list li { margin: 2px 0; }
 .scrum-history-empty { padding: 6px 10px; }

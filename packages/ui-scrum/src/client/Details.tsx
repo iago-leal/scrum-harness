@@ -22,8 +22,17 @@ import {
   artifactPatch, checklist, followServer, isDirty, openByDefault, phaseLogLines, phaseSteps, primaryAction,
 } from './form.ts'
 import type { ArtifactField, FormDrafts, FormServer, PhaseStep } from './form.ts'
+import { createRenderer, mermaidBlocks, previewByDefault, svgNaturalWidth } from './mermaid.ts'
+import type { Block, BlockState, Renderer, Theme } from './mermaid.ts'
+import type { MermaidEngine } from './mermaid-engine.ts'
 import { KIND_META, StateDot, TypeIcon } from './meta.tsx'
 import type { RunOutcome } from './settle.ts'
+
+/** Typing pause before the preview repaints (comp-44 R4). */
+const PREVIEW_DEBOUNCE_MS = 300
+
+/** Mount counter of the form: part of every block id (R6b — unique per block AND per remount). */
+let mountCounter = 0
 
 /** The three task kinds, in the order the form offers them. */
 const TASK_KINDS: readonly WireTaskKind[] = ['test', 'code', 'other']
@@ -165,13 +174,40 @@ interface Notice {
   text: string
 }
 
+/** The blocks of every artifact draft (comp-44 R2): computed from the strings, cheap. */
+function blocksOf(drafts: FormDrafts): Record<ArtifactField, Block[]> {
+  const map = {} as Record<ArtifactField, Block[]>
+  for (const field of ARTIFACT_FIELDS) map[field] = mermaidBlocks(drafts.artifacts[field])
+  return map
+}
+
+/** The preview toggles seeded from the blocks (R2). */
+function previewMap(blocks: Record<ArtifactField, Block[]>): Record<ArtifactField, boolean> {
+  const map = {} as Record<ArtifactField, boolean>
+  for (const field of ARTIFACT_FIELDS) map[field] = previewByDefault(field, blocks[field].length > 0)
+  return map
+}
+
+/** The render states of every artifact's blocks, by block index. */
+type BlockStates = Record<ArtifactField, Record<number, BlockState>>
+
+const emptyStates = (): BlockStates => {
+  const map = {} as BlockStates
+  for (const field of ARTIFACT_FIELDS) map[field] = {}
+  return map
+}
+
 /** The modal work item form. */
 export function WorkItemForm(props: {
   node: DetailsNode
   run: (action: Record<string, unknown>) => Promise<RunOutcome>
   onClose: () => void
+  /** The page's mermaid engine (comp-44 R7); the form renders through it. */
+  engine: MermaidEngine
+  /** The panel theme (comp-44 R6c): a change repaints every diagram. */
+  theme: Theme
 }) {
-  const { node, onClose } = props
+  const { node, onClose, engine, theme } = props
   const server = serverOf(node)
   const [drafts, setDrafts] = useState<FormDrafts>(() => seedDrafts(server))
   const [open, setOpen] = useState<Record<ArtifactField, boolean>>(() => openMap(node.phase))
@@ -183,6 +219,36 @@ export function WorkItemForm(props: {
   const mountedRef = useRef(true)
   const closeRef = useRef<() => void>(() => { onClose() })
 
+  // comp-44: the preview toggles, the user's touches (precedence over any
+  // re-seed, R2/r3-M1), the last hasBlocks per field (the false → true
+  // transition re-seeds untouched fields), the render states and the
+  // availability notice per artifact, and one renderer per mount.
+  const blocks = blocksOf(drafts)
+  const [preview, setPreview] = useState<Record<ArtifactField, boolean>>(() => previewMap(blocks))
+  const touchedRef = useRef(new Set<ArtifactField>())
+  const hadBlocksRef = useRef<Record<ArtifactField, boolean>>(
+    Object.fromEntries(ARTIFACT_FIELDS.map(f => [f, blocks[f].length > 0])) as Record<ArtifactField, boolean>,
+  )
+  const [states, setStates] = useState<BlockStates>(emptyStates)
+  const [unavailable, setUnavailable] = useState<Partial<Record<ArtifactField, string>>>({})
+  const renderersRef = useRef<Record<ArtifactField, Renderer> | null>(null)
+  if (renderersRef.current === null) {
+    const mount = ++mountCounter
+    const map = {} as Record<ArtifactField, Renderer>
+    for (const field of ARTIFACT_FIELDS) {
+      map[field] = createRenderer({
+        setState: (index, state) => { setStates(s => ({ ...s, [field]: { ...s[field], [index]: state } })) },
+        remove: (index) => {
+          setStates(s => { const next = { ...s[field] }; delete next[index]; return { ...s, [field]: next } })
+        },
+        setUnavailable: (reason) => {
+          setUnavailable(u => { const next = { ...u }; if (reason === null) delete next[field]; else next[field] = reason; return next })
+        },
+      }, engine.render, mount * 10 + ARTIFACT_FIELDS.indexOf(field))
+    }
+    renderersRef.current = map
+  }
+
   // Selection changed → re-seed everything; same item → clean fields follow
   // the server (R4), and the open blocks re-seed when the phase moved (r2 L4).
   useEffect(() => {
@@ -191,10 +257,16 @@ export function WorkItemForm(props: {
       idRef.current = node.id
       phaseRef.current = node.phase
       serverRef.current = next
-      setDrafts(seedDrafts(next))
+      const seeded = seedDrafts(next)
+      setDrafts(seeded)
       setOpen(openMap(node.phase))
       setNotice(null)
       setPending(false)
+      // comp-44 R2: a new selection clears the touches and re-seeds the previews.
+      touchedRef.current.clear()
+      const fresh = blocksOf(seeded)
+      setPreview(previewMap(fresh))
+      for (const field of ARTIFACT_FIELDS) hadBlocksRef.current[field] = fresh[field].length > 0
       return
     }
     const prev = serverRef.current
@@ -202,13 +274,55 @@ export function WorkItemForm(props: {
     setDrafts(current => followAll(current, prev, next))
     if (phaseRef.current !== node.phase) {
       phaseRef.current = node.phase
-      setOpen(openMap(node.phase))
+      // Untouched fields only (r3-M1): a toggle the user set survives the phase re-seed.
+      setOpen(current => {
+        const seeded = openMap(node.phase)
+        const merged = { ...current }
+        for (const field of ARTIFACT_FIELDS) if (!touchedRef.current.has(field)) merged[field] = seeded[field]
+        return merged
+      })
     }
   }, [node])
 
+  // comp-44 R2: hasBlocks false → true re-seeds the preview of an untouched field
+  // (a design that gains its first fence with the form open — by another agent
+  // through the poll, or by this very textarea).
+  useEffect(() => {
+    for (const field of ARTIFACT_FIELDS) {
+      const has = blocks[field].length > 0
+      if (has && !hadBlocksRef.current[field] && !touchedRef.current.has(field)) {
+        setPreview(p => ({ ...p, [field]: previewByDefault(field, true) }))
+      }
+      hadBlocksRef.current[field] = has
+    }
+  })
+
+  // comp-44 R4: debounced repaint of every previewed artifact; the renderer
+  // itself skips blocks whose text and theme did not change. `theme` in the
+  // deps is what makes a theme flip repaint (R6c).
+  const artifactsKey = ARTIFACT_FIELDS.map(f => (preview[f] ? drafts.artifacts[f] : '')).join('\u0000')
+  useEffect(() => {
+    const renderers = renderersRef.current
+    if (renderers === null) return
+    const timer = setTimeout(() => {
+      for (const field of ARTIFACT_FIELDS) {
+        if (preview[field]) renderers[field].update(blocks[field], theme)
+        else renderers[field].update([], theme)
+      }
+    }, PREVIEW_DEBOUNCE_MS)
+    return () => { clearTimeout(timer) }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- artifactsKey stands for the previewed drafts
+  }, [artifactsKey, theme, preview])
+
   useEffect(() => {
     mountedRef.current = true
-    return () => { mountedRef.current = false }
+    return () => {
+      mountedRef.current = false
+      // comp-44 R4: the three dispose triggers (close, resolveNode → null, remount)
+      // all pass through this cleanup — nothing in flight touches state afterwards.
+      const renderers = renderersRef.current
+      if (renderers !== null) for (const field of ARTIFACT_FIELDS) renderers[field].dispose()
+    }
   }, [])
 
   // Azure-style dialog: Escape closes from anywhere — through the discard guard, never mid-composition (r1 L7).
@@ -366,7 +480,22 @@ export function WorkItemForm(props: {
         )}
 
         {isComponent && (
-          <ArtifactsSection drafts={drafts} server={server} open={open} onOpen={(field, value) => { setOpen(current => ({ ...current, [field]: value })) }} onChange={setArtifact} />
+          <ArtifactsSection
+            drafts={drafts}
+            server={server}
+            open={open}
+            onOpen={(field, value) => { setOpen(current => ({ ...current, [field]: value })) }}
+            onChange={setArtifact}
+            blocks={blocks}
+            states={states}
+            preview={preview}
+            unavailable={unavailable}
+            onTogglePreview={(field) => {
+              touchedRef.current.add(field)
+              setPreview(current => ({ ...current, [field]: !current[field] }))
+            }}
+            onRetry={(field) => { renderersRef.current?.[field].retry() }}
+          />
         )}
 
         {isComponent && <PhaseLogSection log={node.phaseLog ?? []} />}
@@ -451,13 +580,26 @@ function SpiralSection(props: {
   )
 }
 
-/** The four artifacts as collapsible editable text (comp-43 R4). */
+/**
+ * The four artifacts as collapsible editable text (comp-43 R4); since v0.20
+ * (comp-44 R2) an artifact with ```mermaid fences also carries, BETWEEN the
+ * summary and the textarea, the `Diagramas · N` faixa and — when on — the
+ * rendered diagrams. The textarea never leaves the screen: the preview is a
+ * reading aid over the draft, and the frontmatter the gates read stays
+ * editable underneath it.
+ */
 function ArtifactsSection(props: {
   drafts: FormDrafts
   server: FormServer
   open: Record<ArtifactField, boolean>
   onOpen: (field: ArtifactField, open: boolean) => void
   onChange: (field: ArtifactField, value: string) => void
+  blocks: Record<ArtifactField, Block[]>
+  states: BlockStates
+  preview: Record<ArtifactField, boolean>
+  unavailable: Partial<Record<ArtifactField, string>>
+  onTogglePreview: (field: ArtifactField) => void
+  onRetry: (field: ArtifactField) => void
 }) {
   return (
     <div className="scrum-artifacts">
@@ -466,6 +608,7 @@ function ArtifactsSection(props: {
         const draft = props.drafts.artifacts[field]
         const dirty = draft !== (props.server.artifacts[field] ?? '')
         const size = draft === '' ? 'vazio' : `${draft.split('\n').length} linhas`
+        const blocks = props.blocks[field]
         return (
           <details
             key={field}
@@ -478,6 +621,19 @@ function ArtifactsSection(props: {
               <span className="scrum-artifact-size">· {size}</span>
               {dirty && <span className="scrum-artifact-dirty" title="Rascunho não salvo">•</span>}
             </summary>
+            {blocks.length > 0 && (
+              <DiagramsBar
+                count={blocks.length}
+                dirty={dirty}
+                on={props.preview[field]}
+                unavailable={props.unavailable[field]}
+                onToggle={() => { props.onTogglePreview(field) }}
+                onRetry={() => { props.onRetry(field) }}
+              />
+            )}
+            {blocks.length > 0 && props.preview[field] && props.unavailable[field] === undefined && (
+              <DiagramList blocks={blocks} states={props.states[field]} />
+            )}
             <textarea
               rows={14}
               spellCheck={false}
@@ -486,6 +642,76 @@ function ArtifactsSection(props: {
               onChange={(e) => { props.onChange(field, e.target.value) }}
             />
           </details>
+        )
+      })}
+    </div>
+  )
+}
+
+/**
+ * The `Diagramas · N` faixa of one artifact (comp-44 R2/R4/R5): the count,
+ * the `rascunho` marker when the draft differs from the server (the preview
+ * follows the DRAFT — the deliberate opposite of the trail's mask), the
+ * toggle, and the unavailable notice with its retry when the engine failed.
+ */
+function DiagramsBar(props: {
+  count: number
+  dirty: boolean
+  on: boolean
+  unavailable: string | undefined
+  onToggle: () => void
+  onRetry: () => void
+}) {
+  return (
+    <div className="scrum-diagrams-bar">
+      <span className="scrum-diagrams-count">Diagramas · {props.count}</span>
+      {props.dirty && <span className="scrum-diagrams-draft" title="O preview mostra o rascunho — o gate lê o que está no servidor">rascunho</span>}
+      <span style={{ flex: 1 }} />
+      {props.unavailable !== undefined
+        ? (
+          <>
+            <span className="scrum-diagrams-unavailable">Diagramas indisponíveis: {props.unavailable}</span>
+            <button type="button" className="scrum-btn" onClick={props.onRetry}>tentar de novo</button>
+          </>
+        )
+        : (
+          <button type="button" className="scrum-btn" aria-pressed={props.on} onClick={props.onToggle}>
+            {props.on ? 'Ocultar' : 'Mostrar'}
+          </button>
+        )}
+    </div>
+  )
+}
+
+/**
+ * The rendered diagrams of one artifact, in document order (comp-44 R2/R5):
+ * one figure per block, its caption `#n · kind`, and the body by state —
+ * loading, the svg, or the engine's literal error beside intact siblings.
+ * The svg is a string mermaid produced under `securityLevel: 'strict'`
+ * (labels sanitized); this is the panel's only dangerouslySetInnerHTML and
+ * it is scoped to that contract. The svg sits at its natural width (R9,
+ * `svgNaturalWidth` from the viewBox — mermaid's own `width="100%"` would
+ * shrink a wide diagram to the form) inside the two-axis scroll container.
+ */
+function DiagramList(props: { blocks: Block[]; states: Record<number, BlockState> }) {
+  return (
+    <div className="scrum-diagrams">
+      {props.blocks.map((block) => {
+        const state = props.states[block.index]
+        const width = state?.kind === 'ready' ? svgNaturalWidth(state.svg) : null
+        return (
+          <figure key={block.index} className={`scrum-diagram is-${state?.kind ?? 'idle'}`}>
+            <figcaption>#{block.index + 1} · {block.kind || '(vazio)'}</figcaption>
+            {state === undefined || state.kind === 'loading'
+              ? <div className="scrum-diagram-loading scrum-muted">Renderizando…</div>
+              : state.kind === 'ready'
+                ? (
+                  <div className="scrum-diagram-svg">
+                    <div className="scrum-diagram-natural" style={width === null ? undefined : { width }} dangerouslySetInnerHTML={{ __html: state.svg }} />
+                  </div>
+                )
+                : <pre className="scrum-diagram-error">{state.message}</pre>}
+          </figure>
         )
       })}
     </div>

@@ -9,7 +9,16 @@
  */
 
 import type { ClientContext } from '@deepseek-ai/dsh-client-runtime/client'
+import mermaid from 'mermaid'
+// The second synchronous act of comp-44 R7, on the statement right after the
+// import: mermaid registers a `load` listener at import time that calls
+// `run()` — a document-wide `.mermaid` sweep that REWRITES innerHTML — when
+// `startOnLoad` is true (its default). Plugin bundles execute before `load`
+// fires (async scripts delay it), so the flag must be off before the event,
+// not at the deferred `initialize`. Plain writable property; no DOM, no chunk.
+mermaid.startOnLoad = false
 import { act, fetchState } from './api.ts'
+import { createMermaidEngine } from './mermaid-engine.ts'
 import { createScrumStore } from './store.ts'
 import { PRIMER_CSS } from './primer.ts'
 import { ScrumView } from './ScrumView.tsx'
@@ -19,6 +28,16 @@ import type { SettleSink } from './settle.ts'
 import { SCRUM_CSS } from './styles.ts'
 
 export const name = 'ui-scrum'
+
+/**
+ * The one mermaid engine of the page (R7): `initialize` is deferred to the
+ * first render, so constructing it here costs nothing and touches nothing.
+ * `window.__scrumMermaid` exists only for the R11(8) sensor (the dogfood
+ * reads `startOnLoad` and `mermaidAPI.getConfig()` from the console); no
+ * code path uses it.
+ */
+const engine = createMermaidEngine({ document, mermaid })
+;(window as unknown as { __scrumMermaid?: unknown }).__scrumMermaid = mermaid
 
 /** Services this plugin composes through. */
 export const inject = ['slots']
@@ -55,6 +74,10 @@ export function apply(ctx: ClientContext): void {
     return {
       refresh: (workspace) => { void settler.fetch(fetchState(workspace)) },
       run: (action, workspace) => settler.mutate(act(action, workspace)),
+      // The engine rides the same seam as refresh/run (r6-M1). The renderer's
+      // inject cache running this factory once per entry × session is exactly
+      // right: the engine is a page singleton.
+      engine,
     }
   }
 
