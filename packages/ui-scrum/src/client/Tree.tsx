@@ -227,13 +227,23 @@ export function Tree(props: { state: ScrumState; callbacks: TreeCallbacks; ui: T
     return undefined
   }
 
-  /** Sprint cell of one release: linked sprint chips + target date. */
+  /**
+   * Sprint cell of one release: the two most relevant linked sprints (the
+   * active/planned one first, then the newest) as chips, the rest folded
+   * into a `+N` chip whose tooltip lists them — a release that spanned nine
+   * sprints must not push its chips past the board. Plus the target date.
+   */
   const releaseSprintCell = (release: WireRelease): ReactNode => {
-    const linked = props.state.sprints.filter(s => s.releaseIds.includes(release.id))
+    const rank: Record<WireSprint['status'], number> = { active: 0, planned: 1, completed: 2 }
+    const linked = props.state.sprints
+      .filter(s => s.releaseIds.includes(release.id))
+      .sort((a, b) => rank[a.status] - rank[b.status] || b.number - a.number)
     if (linked.length === 0 && release.targetDate === undefined) return undefined
+    const shown = linked.slice(0, 2)
+    const folded = linked.slice(2)
     return (
       <>
-        {linked.map(sprint => (
+        {shown.map(sprint => (
           <button
             key={sprint.id}
             className={`scrum-chip st-${sprint.status}`}
@@ -241,6 +251,13 @@ export function Tree(props: { state: ScrumState; callbacks: TreeCallbacks; ui: T
             onClick={goToSprints}
           >{sprint.id}</button>
         ))}
+        {folded.length > 0 && (
+          <button
+            className="scrum-chip st-completed"
+            title={`Mais ${folded.length} sprint(s): ${folded.map(s => s.id).join(', ')} — abrir aba Sprints`}
+            onClick={goToSprints}
+          >+{folded.length}</button>
+        )}
         {release.targetDate !== undefined && (
           <span className="scrum-pts" title="Data alvo">🎯 {release.targetDate.slice(0, 10)}</span>
         )}

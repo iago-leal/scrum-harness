@@ -61,6 +61,7 @@ export const SCRUM_CSS = `
   color: var(--fgColor-muted, #6b7280);
   background: var(--bgColor-neutral-muted, rgba(105, 115, 135, 0.12));
   border-radius: var(--borderRadius-small, 5px); padding: 1px 6px;
+  white-space: nowrap; flex: none;
 }
 .scrum-pts {
   font-size: 11px; font-weight: 600; color: var(--fgColor-muted, #5a6172);
@@ -154,7 +155,7 @@ export const SCRUM_CSS = `
   border: 1px solid var(--borderColor-default, #e2e5ec); border-radius: var(--borderRadius-medium, 10px);
 }
 .scrum-bl-row {
-  display: grid; grid-template-columns: minmax(0, 1fr) 140px 130px 150px;
+  display: grid; grid-template-columns: minmax(0, 1fr) 140px 120px 180px;
   align-items: center; min-height: 34px; border-bottom: 1px solid var(--borderColor-muted, #eef0f4);
 }
 .scrum-bl-row:last-child { border-bottom: none; }
@@ -175,7 +176,9 @@ export const SCRUM_CSS = `
 .scrum-bl-item {
   display: flex; align-items: center; gap: 7px; min-width: 0; padding-right: 10px;
 }
-.scrum-bl-cell { display: flex; align-items: center; gap: 5px; padding-right: 10px; min-width: 0; }
+/* Cells clip: whatever does not fit its column is hidden, never painted over the board's edge. */
+.scrum-bl-cell { display: flex; align-items: center; gap: 5px; padding-right: 10px; min-width: 0; overflow: hidden; }
+.scrum-bl-cell .scrum-chip { flex: none; }
 .scrum-bl-title {
   border: none; background: transparent; cursor: pointer; padding: 0;
   font: inherit; color: inherit; text-align: left; font-weight: 500;
