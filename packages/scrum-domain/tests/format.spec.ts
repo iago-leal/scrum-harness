@@ -7,7 +7,7 @@ import { describe, expect, it } from 'vitest'
 import { formatReviewBrief, formatSprints, formatSprintStatus, formatTree, withBoardHeader, withBudgetHeader } from '../src/format.ts'
 import type { ReviewBriefData, ScrumTree } from '../src/service.ts'
 import type { Component } from '../src/spec.ts'
-import { ArtifactContract } from '../src/contracts.ts'
+import { ArtifactContract, TitleContract } from '../src/contracts.ts'
 
 function component(fields: Partial<Component>): Component {
   return {
@@ -440,5 +440,16 @@ describe('title overflow in the text views (comp-53 R5)', () => {
       .toBe('Suite budget: 10s (board)\nTitle limit: 80 chars (sprint goal 120) — 1 title(s) and 0 goal(s) over\n\nbody')
     // The old helper stays as the clean-board case.
     expect(withBudgetHeader(boardBudget, 'body')).toBe('Suite budget: 10s (board)\n\nbody')
+  })
+})
+
+describe('review brief conventions — the title rule (comp-54 R6)', () => {
+  it('states the two ceilings from TitleContract.limits() in the House conventions block', () => {
+    const limits = TitleContract.limits()
+    const text = formatReviewBrief(brief())
+    const line = `- Titles: release/feature/component/task titles ≤ ${limits.title} chars and sprint goals ≤ ${limits.goal} (one line; the domain refuses more — TitleContract); the paragraph goes to description or the planning ceremony.`
+    expect(text).toContain(line)
+    expect(text.indexOf(line)).toBeGreaterThan(text.indexOf('## House conventions'))
+    expect(text.indexOf(line)).toBeLessThan(text.indexOf('## Guiding questions'))
   })
 })

@@ -198,6 +198,9 @@ export interface Overflowed { titleOverflow?: Overflow }
 /** A sprint as read: the record plus the read-time mark of a goal over the limit (comp-53 R4). */
 export type SprintView = Sprint & { goalOverflow?: Overflow }
 
+/** A task as read: the record plus the read-time mark of a title over the limit (comp-54 R3). */
+export type TaskView = Task & Overflowed
+
 /** How many live titles and how many goals stand over their limit, with the limits (comp-53 D3). */
 export interface OverflowSummary { titles: number; goals: number; limits: TitleLimits }
 
@@ -258,7 +261,8 @@ type HierRecord = Release | Feature | Component | Task
 /** Sprint progress summary (simple burndown numbers). */
 export interface SprintStatus {
   sprint: SprintView
-  tasks: Task[]
+  /** The sprint's tasks, marked when a title is over the limit (comp-54 R3: the snapshot reads these, not the tree). */
+  tasks: TaskView[]
   totals: { tasks: number; done: number; points: number; pointsDone: number }
   /** Whole days until `endDate`, when the sprint declares one. */
   daysRemaining?: number
@@ -609,6 +613,7 @@ export class ScrumBoard {
       // are history and keep counting in the totals of completed sprints.
       .filter(t => t.sprintId === sprint.id && t.deletedAt === undefined)
       .sort((a, b) => a.order - b.order)
+      .map(t => ({ ...t, ...this.marked(t.title) }))
     const done = tasks.filter(t => t.status === 'done')
     const points = (list: Task[]): number => list.reduce((sum, t) => sum + (t.estimate ?? 0), 0)
     const status: SprintStatus = {

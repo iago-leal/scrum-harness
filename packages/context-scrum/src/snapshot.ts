@@ -11,8 +11,8 @@
  * @module @scrum-harness/context-scrum/snapshot
  */
 
-import { BOARD_COLUMNS, kindPrefix } from '@scrum-harness/domain'
-import type { PhaseReadiness, ScrumBoard, ScrumTree, Sprint, Task } from '@scrum-harness/domain'
+import { BOARD_COLUMNS, kindPrefix, TitleContract } from '@scrum-harness/domain'
+import type { PhaseReadiness, ScrumBoard, ScrumTree, SprintView, TaskView, TitleLimits } from '@scrum-harness/domain'
 
 /** Column captions used in the snapshot (short, id-first). */
 const COLUMN_CAPTIONS: Record<(typeof BOARD_COLUMNS)[number], string> = {
@@ -25,13 +25,18 @@ const COLUMN_CAPTIONS: Record<(typeof BOARD_COLUMNS)[number], string> = {
 /** One component as the tree hands it (with its Model-computed readiness). */
 type TreeComponent = ScrumTree['releases'][number]['features'][number]['components'][number]
 
-/** Caps of the two modes (R2/R3/R5): reasons, goal, titles, list lengths. */
+/**
+ * Caps of the two modes (R2/R3/R5): reasons and list lengths. Titles and
+ * goals are NOT cut here by numbers of their own: they are cut at the
+ * Model's limits (comp-54 R2, `board.titleLimits()`), so a valid title is
+ * never truncated and only legacy overflow gets the ellipsis.
+ */
 const ACTIVE_REASONS = 160
 const IDLE_REASONS = 100
-const GOAL_CHARS = 120
-const TITLE_CHARS = 48
 const MAX_IN_PROGRESS = 5
 const MAX_BACKLOG = 6
+/** Ids listed per part of the hygiene line before ` +N` (comp-54 R3). */
+const HYGIENE_IDS = 3
 
 /** The discipline the agent must follow with a live board, plus the spiral (R2). */
 const DISCIPLINE =
@@ -49,9 +54,35 @@ function cut(text: string, max: number): string {
 }
 
 /** Render one task entry: `task-7 [test] "Título" (3pt)` (the kind prefix is the View's, comp-45 R4). */
-function taskEntry(task: Task): string {
+function taskEntry(task: TaskView, limit: number): string {
   const points = task.estimate === undefined ? '' : ` (${task.estimate}pt)`
-  return `${task.id} ${kindPrefix(task)}"${cut(task.title, 64)}"${points}`
+  return `${task.id} ${kindPrefix(task)}"${cut(task.title, limit)}"${points}`
+}
+
+/**
+ * The hygiene line (comp-54 R3): what the agent should fix about the sprint's
+ * OPEN tasks and the sprint itself — (a) tasks without a description, (b)
+ * titles in the warn band, (c) legacy titles/goal over the limit. Done tasks
+ * are history and never count (D1). Each part lists up to three ids then
+ * ` +N`. Null when there is nothing to say.
+ * @param tasks - the sprint's tasks as `sprintStatus` hands them (marked).
+ * @param sprint - the sprint (marked).
+ * @param limits - the Model's ceilings.
+ */
+export function hygiene(tasks: readonly TaskView[], sprint: SprintView, limits: TitleLimits): string | null {
+  const open = tasks.filter(t => t.status !== 'done')
+  const part = (n: number, label: string, ids: string[]): string =>
+    `${n} ${label} (${ids.slice(0, HYGIENE_IDS).join(', ')}${n > HYGIENE_IDS ? ` +${n - HYGIENE_IDS}` : ''})`
+  const parts: string[] = []
+  const blank = open.filter(t => (t.description ?? '').trim().length === 0)
+  if (blank.length > 0) parts.push(part(blank.length, 'task(s) da sprint sem descrição', blank.map(t => t.id)))
+  const near = open.filter(t => TitleContract.tone('title', t.title) === 'warn')
+  if (near.length > 0) parts.push(part(near.length, 'título(s) perto do limite', near.map(t => `${t.id} ${TitleContract.length(t.title)}/${limits.title}`)))
+  const legacy = open.filter(t => t.titleOverflow !== undefined).map(t => `${t.id} ${t.titleOverflow!.length}/${t.titleOverflow!.limit}`)
+  if (sprint.goalOverflow !== undefined) legacy.push(`${sprint.id} meta ${sprint.goalOverflow.length}/${sprint.goalOverflow.limit}`)
+  if (legacy.length > 0) parts.push(part(legacy.length, 'legado(s) acima do limite', legacy))
+  if (parts.length === 0) return null
+  return `Higiene: ${parts.join(' · ')} — o título é o QUÊ; o COMO vai na descrição.`
 }
 
 /** ` · tdd → construction: <reasons | ok>` — empty once the component is done (`next: null`). */
@@ -88,23 +119,24 @@ function liveComponents(tree: ScrumTree): TreeComponent[] {
 export function renderSprintContext(board: ScrumBoard): string | null {
   const tree = board.tree()
   const sprint = board.activeSprint()
-  if (sprint !== undefined) return renderActive(board, tree, sprint)
+  const limits = board.titleLimits()
+  if (sprint !== undefined) return renderActive(board, tree, sprint, limits)
   const components = liveComponents(tree)
   if (components.length === 0) return null
-  return renderIdle(board, components)
+  return renderIdle(board, components, limits)
 }
 
 /** The active-sprint mode (v0.7 + the spiral of comp-46 R2). */
-function renderActive(board: ScrumBoard, tree: ScrumTree, sprint: Sprint): string {
+function renderActive(board: ScrumBoard, tree: ScrumTree, sprint: SprintView, limits: TitleLimits): string {
   const status = board.sprintStatus(sprint.id)
 
   const lines: string[] = []
-  lines.push(`[SCRUM · sprint ativa ${sprint.id} #${sprint.number}] ${sprint.goal}`)
+  lines.push(`[SCRUM · sprint ativa ${sprint.id} #${sprint.number}] ${cut(sprint.goal, limits.goal)}`)
   lines.push(`Progresso: ${status.totals.done}/${status.totals.tasks} tarefas · ${status.totals.pointsDone}/${status.totals.points} pontos.`)
 
   for (const column of BOARD_COLUMNS) {
     const inColumn = status.tasks.filter(task => task.status === column)
-    const list = inColumn.length === 0 ? '—' : inColumn.map(taskEntry).join('; ')
+    const list = inColumn.length === 0 ? '—' : inColumn.map(t => taskEntry(t, limits.title)).join('; ')
     lines.push(`${COLUMN_CAPTIONS[column]}: ${list}`)
   }
 
@@ -139,21 +171,29 @@ function renderActive(board: ScrumBoard, tree: ScrumTree, sprint: Sprint): strin
     lines.push(`Em andamento (sem task na sprint): ${capped(others.map(c => componentEntry(c, ACTIVE_REASONS)), MAX_IN_PROGRESS)}`)
   }
 
+  // comp-54 R3: what to fix about the sprint's open tasks — before the discipline it enforces.
+  const care = hygiene(status.tasks, status.sprint, limits)
+  if (care !== null) lines.push(care)
+
   lines.push(DISCIPLINE)
   return lines.join('\n')
 }
 
 /** The idle mode (comp-46 R3): between sprints, on a board that uses SCRUM. */
-function renderIdle(board: ScrumBoard, components: TreeComponent[]): string {
+function renderIdle(board: ScrumBoard, components: TreeComponent[], limits: TitleLimits): string {
   const lines: string[] = []
 
   // The highest-numbered sprint heads the snapshot (never its daysRemaining: R5).
   const latest = board.sprints()[0]
+  let care: string | null = null
   if (latest === undefined) {
     lines.push('[SCRUM · sem sprint ativa] nenhuma sprint ainda')
   } else {
-    const { totals } = board.sprintStatus(latest.id)
-    const goal = `"${cut(latest.goal, GOAL_CHARS)}"`
+    const status = board.sprintStatus(latest.id)
+    const { totals } = status
+    // comp-54 R3/D1: between sprints only the latest goal (and the todo of a planned one) can be flagged.
+    care = hygiene(status.tasks, status.sprint, limits)
+    const goal = `"${cut(latest.goal, limits.goal)}"`
     lines.push(latest.status === 'planned'
       ? `[SCRUM · sem sprint ativa] planejada: ${latest.id} #${latest.number} [planned] ${totals.tasks} tasks · ${totals.points} pts — ${goal}`
       : `[SCRUM · sem sprint ativa] última: ${latest.id} #${latest.number} [${latest.status}] ${totals.done} tasks · ${totals.pointsDone} pts entregues — ${goal}`)
@@ -162,7 +202,8 @@ function renderIdle(board: ScrumBoard, components: TreeComponent[]): string {
   const inProgress = components.filter(c => c.status === 'in_progress')
   const proposed = components.filter(c => c.status === 'proposed')
   lines.push(`Em andamento: ${inProgress.length === 0 ? '—' : capped(inProgress.map(c => componentEntry(c, IDLE_REASONS)), MAX_IN_PROGRESS)}`)
-  lines.push(`Backlog: ${proposed.length === 0 ? '—' : capped(proposed.map(c => `${c.id} "${cut(c.title, TITLE_CHARS)}" [${c.phase}]`), MAX_BACKLOG)}`)
+  lines.push(`Backlog: ${proposed.length === 0 ? '—' : capped(proposed.map(c => `${c.id} "${cut(c.title, limits.title)}" [${c.phase}]`), MAX_BACKLOG)}`)
+  if (care !== null) lines.push(care)
 
   // Next step by precedence: a planned sprint waits to start; work waits for
   // a sprint; a finished board waits for the next component or the archive.

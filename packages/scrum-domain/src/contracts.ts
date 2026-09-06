@@ -406,6 +406,8 @@ export type TitleKind = 'title' | 'goal'
 export interface Overflow { length: number; limit: number }
 /** The two ceilings, as Controllers and the View read them (`titleLimits()`, `state.limits`). */
 export interface TitleLimits { title: number; goal: number }
+/** The counter tone of a text against its limit (comp-54 R4): muted / attention / danger. */
+export type Tone = 'ok' | 'warn' | 'over'
 
 /** Line breaks and control characters: C0, DEL, C1, and the Unicode line/paragraph separators (D7). */
 const CONTROL = /[\u0000-\u001F\u007F-\u009F\u2028\u2029]/u
@@ -452,6 +454,19 @@ export class TitleContract {
     const length = TitleContract.length(text)
     if (length > limit) reasons.push(`${noun.subject} too long: ${length} > ${limit} chars — ${noun.where}`)
     return reasons.length === 0 ? { ok: true } : { ok: false, reasons }
+  }
+
+  /**
+   * The tone of a text against its limit (comp-54 R4): `over` past the
+   * limit, `warn` from 80% of it (ceil) inclusive, `ok` below — the rule the
+   * GUI counter duplicates on purpose (comp-53 D6) and the snapshot reads here.
+   * @param kind - title or goal.
+   * @param text - the text (trimmed, prefix-free).
+   */
+  static tone(kind: TitleKind, text: string): Tone {
+    const limit = TitleContract.limits()[kind]
+    const length = TitleContract.length(text)
+    return length > limit ? 'over' : length >= Math.ceil(0.8 * limit) ? 'warn' : 'ok'
   }
 
   /**

@@ -4,7 +4,7 @@
  * @module @scrum-harness/domain/format
  */
 
-import { DEFAULT_SUITE_BUDGET_SECONDS, ReviewContract } from './contracts.ts'
+import { DEFAULT_SUITE_BUDGET_SECONDS, ReviewContract, TitleContract } from './contracts.ts'
 import type { Overflow, SuiteBudget } from './contracts.ts'
 import type { Ceremony, Component, Sprint, Task } from './spec.ts'
 import type { ImpactHit, ImpactReport, OverflowSummary, ReviewBriefData, ScrumTree, ShelfLists, SprintStatus, SprintView } from './service.ts'
@@ -91,6 +91,8 @@ export function formatReviewBrief(data: ReviewBriefData): string {
     '- Traceability: the design frontmatter carries the matrix — traces: then one indented entry per line "- { req: [R1], files: [<workspace-relative paths>], tests: [...] }" (all three keys);',
     '  every requirement id must appear (files: [] for a requirement without code); the validation frontmatter may carry the as-built traces (an array), which then close the matrix.',
     '  Gates: design → tdd and status done.',
+    // comp-54 R6: the title rule travels with the brief, numbers from the Model.
+    `- Titles: release/feature/component/task titles ≤ ${TitleContract.limits().title} chars and sprint goals ≤ ${TitleContract.limits().goal} (one line; the domain refuses more — TitleContract); the paragraph goes to description or the planning ceremony.`,
   ].join('\n'))
   blocks.push([
     '## Guiding questions (do not stop at them)',

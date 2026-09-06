@@ -28,6 +28,7 @@ import {
   TASK_KINDS,
   TRACE_PROBE_CAP,
   withBoardHeader,
+  TitleContract,
 } from '@scrum-harness/domain'
 // Type-only: resolves ctx.scrum for the inject declaration.
 import type {} from '@scrum-harness/domain'
@@ -37,6 +38,18 @@ export const name = 'tool-scrum'
 export const inject = ['tools', 'scrum']
 
 /** Output spec shared by every mutating tool: one confirmation line. */
+/**
+ * The WHAT and the HOW on the parameters (comp-54 R1): the numbers come
+ * from the Model at registration time — the Controller never types them,
+ * so a limit change can never leave a description lying.
+ */
+const LIMITS = TitleContract.limits()
+const TITLE_DOC = `The WHAT, one line that fits a card: ≤ ${LIMITS.title} chars, no line break. Details go to description.`
+const NAME_DOC = `Release name, e.g. "v1.0" — one line, ≤ ${LIMITS.title} chars.`
+const GOAL_DOC = `The sprint goal in one line: ≤ ${LIMITS.goal} chars. The reasoning goes to the planning ceremony (scrum_ceremony_record).`
+const HOW_DOC = 'The HOW: requirements covered (Rn), cases, numbers, deviations — this is where the paragraph goes.'
+const RELEASE_HOW_DOC = 'What this release delivers: the features shipped, numbers, deviations — this is where the paragraph goes.'
+
 const TEXT_OUTPUT = {
   schema: {
     type: 'object',
@@ -114,8 +127,8 @@ export function apply(ctx: Context): void {
     name: 'scrum_release_create',
     description: 'Create a Release (top of the SCRUM hierarchy): a shippable product version.',
     parameters: {
-      name: { type: 'string', required: true, description: 'Release name, e.g. "v1.0".' },
-      description: { type: 'string', description: 'What this release delivers.' },
+      name: { type: 'string', required: true, description: NAME_DOC },
+      description: { type: 'string', description: RELEASE_HOW_DOC },
       targetDate: { type: 'string', description: 'Target date, ISO format (YYYY-MM-DD).' },
     },
     output: TEXT_OUTPUT,
@@ -132,8 +145,8 @@ export function apply(ctx: Context): void {
     description: 'Create a Feature (função) under an existing Release.',
     parameters: {
       releaseId: { type: 'string', required: true, description: 'Parent release id (rel-N).' },
-      title: { type: 'string', required: true },
-      description: { type: 'string' },
+      title: { type: 'string', required: true, description: TITLE_DOC },
+      description: { type: 'string', description: HOW_DOC },
     },
     output: TEXT_OUTPUT,
     async execute(args, exec) {
@@ -149,8 +162,8 @@ export function apply(ctx: Context): void {
     description: 'Create a Component (product-backlog entry, componente) under an existing Feature.',
     parameters: {
       featureId: { type: 'string', required: true, description: 'Parent feature id (feat-N).' },
-      title: { type: 'string', required: true },
-      description: { type: 'string' },
+      title: { type: 'string', required: true, description: TITLE_DOC },
+      description: { type: 'string', description: HOW_DOC },
     },
     output: TEXT_OUTPUT,
     async execute(args, exec) {
@@ -168,8 +181,8 @@ export function apply(ctx: Context): void {
       + 'Tasks carry a kind (test | code | other): give `kind`, or start the title with [test]/[code] and it is inferred (the prefix leaves the stored title).',
     parameters: {
       componentId: { type: 'string', required: true, description: 'Parent component id (comp-N).' },
-      title: { type: 'string', required: true },
-      description: { type: 'string' },
+      title: { type: 'string', required: true, description: TITLE_DOC },
+      description: { type: 'string', description: HOW_DOC },
       estimate: { type: 'number', description: 'Story points (relative estimation).' },
       kind: {
         type: 'string',
@@ -198,8 +211,8 @@ export function apply(ctx: Context): void {
       + 'spr- (goal, releaseIds — replaces the linked set, releaseId as one-id shortcut, wipLimits). Description applies to all except sprints.',
     parameters: {
       id: { type: 'string', required: true },
-      title: { type: 'string', description: 'New title / release name.' },
-      description: { type: 'string' },
+      title: { type: 'string', description: `New title (rel-: the release name). ${TITLE_DOC}` },
+      description: { type: 'string', description: `All levels except sprints. ${HOW_DOC}` },
       requirements: { type: 'string', description: 'Components only: the requirements artifact — markdown with a YAML frontmatter on line 1 carrying `version: <int ≥ 1>` and, once the human approved them, `status: approved`; the body declares its ids as "R1 — …" at line start (the traceability matrix keys on them). Gate requirements → design.' },
       requirementsReview: { type: 'string', description: 'Components only: the adversarial review — markdown with frontmatter { reviewer, reviewed_version, reviewed_digest, verdict: approved|needs-revision, round, findings: { high, medium, low } } (get it pre-filled from scrum_component_review_brief). The gate needs verdict approved with findings.high 0, covering the current requirements version and digest.' },
       design: { type: 'string', description: 'Components only: the design artifact (text + mermaid) whose frontmatter carries the traceability matrix — `traces:` then one indented entry per line `  - { req: [R1], files: [<workspace-relative paths>], tests: [...] }` (all three keys; every requirement id must appear; files: [] for a requirement without code). Gate design → tdd.' },
@@ -208,7 +221,7 @@ export function apply(ctx: Context): void {
       kind: { type: 'string', enum: [...TASK_KINDS], description: 'Tasks only: the task kind (test | code | other).' },
       targetDate: { type: 'string', description: 'Releases only (ISO date).' },
       status: { type: 'string', description: 'Releases, features and components (each level has its own workflow). Component `done` is gated: phase validation, every task done, and a `validation` artifact honoring its contract — a refusal names every missing condition.' },
-      goal: { type: 'string', description: 'Sprints only.' },
+      goal: { type: 'string', description: `Sprints only. ${GOAL_DOC}` },
       releaseId: { type: 'string', description: 'Sprints only: shortcut for releaseIds with ONE release (rel-N); empty string removes every link.' },
       releaseIds: {
         type: 'array',
@@ -537,7 +550,7 @@ export function apply(ctx: Context): void {
       'Sprint Planning: create a new sprint (status planned) with a goal, optional time window, and an '
       + 'optional initial selection of backlog tasks (they become its sprint backlog, column todo).',
     parameters: {
-      goal: { type: 'string', required: true, description: 'The sprint goal.' },
+      goal: { type: 'string', required: true, description: GOAL_DOC },
       releaseId: { type: 'string', description: 'Single release this sprint advances (rel-N); backward-compatible shortcut for releaseIds: [id].' },
       releaseIds: {
         type: 'array',

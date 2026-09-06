@@ -16,7 +16,7 @@ import { CONTRACT_DESIGN } from '@scrum-harness/test-support/src/fixtures.ts'
 import SystemPrompt from '@deepseek-ai/dsh-system-prompt'
 import ToolRuntime from '@deepseek-ai/dsh-tools'
 import type { CallId } from '@deepseek-ai/dsh-tools'
-import { ScrumService } from '@scrum-harness/domain'
+import { ScrumService, TitleContract } from '@scrum-harness/domain'
 import * as ToolScrum from '../src/index.ts'
 
 
@@ -731,5 +731,31 @@ describe('title contract (comp-53)', () => {
     // is not available here, so the header is proved in the domain (format.spec) and the tools only pass overflowSummary through.
     await run('scrum_suite_budget', { seconds: 10 })
     expect((await run('scrum_tree', {})).text).toMatch(/^Suite budget: 10s \(board\)\n\n/)
+  })
+})
+
+// ── comp-54 R1: the WHAT and the HOW, declared on the parameters — written before the code ──
+
+describe('title/description parameter docs (comp-54 R1)', () => {
+  it('the 5 title/name, 2 goal and 5 description parameters carry the contract with the numbers from TitleContract.limits()', () => {
+    const limits = TitleContract.limits()
+    const schemas = ctx.tools.schemas()
+    const props = (name: string) => (schemas.find(s => s.name === name)!.parameters as { properties: Record<string, { description?: string }> }).properties
+    const doc = (tool: string, param: string) => props(tool)[param]?.description ?? ''
+    const what = `The WHAT, one line that fits a card: ≤ ${limits.title} chars, no line break. Details go to description.`
+    const goal = `The sprint goal in one line: ≤ ${limits.goal} chars. The reasoning goes to the planning ceremony (scrum_ceremony_record).`
+    const how = 'The HOW: requirements covered (Rn), cases, numbers, deviations — this is where the paragraph goes.'
+    for (const tool of ['scrum_feature_create', 'scrum_component_create', 'scrum_task_create']) {
+      expect(doc(tool, 'title')).toBe(what)
+      expect(doc(tool, 'description')).toBe(how)
+    }
+    expect(doc('scrum_release_create', 'name')).toBe(`Release name, e.g. "v1.0" — one line, ≤ ${limits.title} chars.`)
+    expect(doc('scrum_release_create', 'description')).toBe('What this release delivers: the features shipped, numbers, deviations — this is where the paragraph goes.')
+    expect(doc('scrum_item_update', 'title')).toBe(`New title (rel-: the release name). ${what}`)
+    expect(doc('scrum_item_update', 'description')).toBe(`All levels except sprints. ${how}`)
+    expect(doc('scrum_item_update', 'goal')).toBe(`Sprints only. ${goal}`)
+    expect(doc('scrum_sprint_plan', 'goal')).toBe(goal)
+    // Sprints have no description parameter (the reasoning goes to the planning ceremony).
+    expect(props('scrum_sprint_plan')['description']).toBeUndefined()
   })
 })

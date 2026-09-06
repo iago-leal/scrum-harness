@@ -1737,6 +1737,8 @@ describe('title contract — legacy read, marked, never rejected (comp-53 R4)', 
     expect(board.sprints()[0]!.goalOverflow).toEqual({ length: 200, limit: 120 })
     expect(board.activeSprint()!.goalOverflow).toEqual({ length: 200, limit: 120 })
     expect(board.sprintStatus(sprintId).sprint.goalOverflow).toEqual({ length: 200, limit: 120 })
+    // comp-54 R3: the sprint's tasks travel marked too (the snapshot reads sprintStatus, not tree).
+    expect(board.sprintStatus(sprintId).tasks[0]!.titleOverflow).toEqual({ length: 300, limit: 80 })
     expect(board.overflowSummary()).toEqual({ titles: 1, goals: 1, limits: { title: 80, goal: 120 } })
     expect(board.titleLimits()).toEqual({ title: 80, goal: 120 })
     void taskId
@@ -1770,6 +1772,7 @@ describe('title contract — legacy read, marked, never rejected (comp-53 R4)', 
     await board.updateItem(taskId, { title: 'now it fits' })
     await board.updateItem(sprintId, { goal: 'and so does the goal' })
     expect(board.tree().releases[0]!.features[0]!.components[0]!.tasks[0]!.titleOverflow).toBeUndefined()
+    expect(board.sprintStatus(sprintId).tasks[0]!.titleOverflow).toBeUndefined()
     expect(board.sprints()[0]!.goalOverflow).toBeUndefined()
     expect(board.overflowSummary()).toEqual({ titles: 0, goals: 0, limits: { title: 80, goal: 120 } })
   })

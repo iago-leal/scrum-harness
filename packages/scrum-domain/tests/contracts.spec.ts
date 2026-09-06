@@ -688,3 +688,20 @@ describe('TitleContract (comp-53 R1, D7)', () => {
     expect(TitleContract.overflow('goal', 'g'.repeat(120))).toBeUndefined()
   })
 })
+
+describe('TitleContract.tone (comp-54 R4)', () => {
+  it('title: 63 ok, 64 warn (ceil 0.8 × 80), 80 warn, 81 over', () => {
+    expect(TitleContract.tone('title', 'x'.repeat(63))).toBe('ok')
+    expect(TitleContract.tone('title', 'x'.repeat(64))).toBe('warn')
+    expect(TitleContract.tone('title', 'x'.repeat(80))).toBe('warn')
+    expect(TitleContract.tone('title', 'x'.repeat(81))).toBe('over')
+  })
+
+  it('goal: 95 ok, 96 warn, 120 warn, 121 over — measured in code points', () => {
+    expect(TitleContract.tone('goal', 'g'.repeat(95))).toBe('ok')
+    expect(TitleContract.tone('goal', 'g'.repeat(96))).toBe('warn')
+    expect(TitleContract.tone('goal', 'g'.repeat(120))).toBe('warn')
+    expect(TitleContract.tone('goal', 'g'.repeat(121))).toBe('over')
+    expect(TitleContract.tone('goal', '😀'.repeat(96))).toBe('warn')
+  })
+})
