@@ -10,7 +10,7 @@ import { describe, expect, it } from 'vitest'
 import type { WirePhase, WirePhaseReadiness } from '../src/client/api.ts'
 import {
   ARTIFACT_FIELDS, ARTIFACT_LABELS, ARTIFACT_PLACEHOLDERS, PHASE_TITLES, PHASES,
-  artifactPatch, checklist, followServer, isDirty, openByDefault, phaseLabel, phaseLogLines, phaseSteps, primaryAction,
+  artifactPatch, checklist, followServer, isDirty, openByDefault, phaseLabel, phaseLogLines, phaseSteps, primaryAction, titleCounter,
 } from '../src/client/form.ts'
 import type { FormDrafts, FormServer, PhaseStep } from '../src/client/form.ts'
 
@@ -275,5 +275,32 @@ describe('phaseLogLines (R6) — chronological, UTC, deterministic', () => {
 
   it('r2 L4: an unparseable stamp is shown raw', () => {
     expect(phaseLogLines([{ from: 'tdd', to: 'construction', at: 'not-a-date' }])).toEqual(['tdd → construction · not-a-date'])
+  })
+})
+
+// ── comp-53: the title counter (R6, D6) — written before the code ──
+
+describe('titleCounter (comp-53 R6)', () => {
+  it('tones at the exact thresholds for 80: 63 ok, 64 warn, 80 warn, 81 over', () => {
+    expect(titleCounter('x'.repeat(63), 80)).toEqual({ length: 63, tone: 'ok' })
+    expect(titleCounter('x'.repeat(64), 80)).toEqual({ length: 64, tone: 'warn' })
+    expect(titleCounter('x'.repeat(80), 80)).toEqual({ length: 80, tone: 'warn' })
+    expect(titleCounter('x'.repeat(81), 80)).toEqual({ length: 81, tone: 'over' })
+  })
+
+  it('tones at the exact thresholds for 120: 95 ok, 96 warn, 120 warn, 121 over', () => {
+    expect(titleCounter('g'.repeat(95), 120).tone).toBe('ok')
+    expect(titleCounter('g'.repeat(96), 120).tone).toBe('warn')
+    expect(titleCounter('g'.repeat(120), 120).tone).toBe('warn')
+    expect(titleCounter('g'.repeat(121), 120).tone).toBe('over')
+  })
+
+  it('counts code points of the trimmed text, without a leading [test]/[code] prefix (the number the domain measures)', () => {
+    expect(titleCounter('  abc  ', 80).length).toBe(3)
+    expect(titleCounter('😀'.repeat(5), 80).length).toBe(5)
+    expect(titleCounter('[test] abc', 80).length).toBe(3)
+    expect(titleCounter('[CODE]abc', 80).length).toBe(3)
+    expect(titleCounter('[spike] abc', 80).length).toBe(11)
+    expect(titleCounter('', 80)).toEqual({ length: 0, tone: 'ok' })
   })
 })

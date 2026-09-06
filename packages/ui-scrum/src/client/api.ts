@@ -17,6 +17,8 @@ export interface WireTask {
   estimate?: number
   /** Always present on the wire (the Model migrates legacy media on parse). */
   kind: WireTaskKind
+  /** Legacy title over the limit (comp-53 R4); absent when it fits. */
+  titleOverflow?: WireOverflow
   status: 'backlog' | 'todo' | 'in_progress' | 'review' | 'done'
   /** When the task last entered done (burndown stamp, v0.6+). */
   doneAt?: string
@@ -31,6 +33,8 @@ export interface WireComponent {
   title: string
   description?: string
   status: 'proposed' | 'in_progress' | 'done'
+  /** Legacy title over the limit (comp-53 R4); absent when it fits. */
+  titleOverflow?: WireOverflow
   /** Spiral phase (v0.12); always present on the wire. */
   phase: WirePhase
   /** Spiral artifacts: markdown with an optional YAML frontmatter. */
@@ -94,6 +98,8 @@ export interface WireFeature {
   title: string
   description?: string
   status: 'proposed' | 'committed' | 'in_progress' | 'done'
+  /** Legacy title over the limit (comp-53 R4); absent when it fits. */
+  titleOverflow?: WireOverflow
   components: WireComponent[]
 }
 
@@ -104,6 +110,8 @@ export interface WireRelease {
   description?: string
   targetDate?: string
   status: 'planned' | 'active' | 'released'
+  /** Legacy name over the limit (comp-53 R4); absent when it fits. */
+  titleOverflow?: WireOverflow
   features: WireFeature[]
 }
 
@@ -117,6 +125,8 @@ export interface WireSprint {
   startDate?: string
   endDate?: string
   status: 'planned' | 'active' | 'completed'
+  /** Legacy goal over the limit (comp-53 R4); absent when it fits. */
+  goalOverflow?: WireOverflow
   /** Per-column WIP limits of the task board (soft), when set. */
   wipLimits?: Partial<Record<'todo' | 'in_progress' | 'review' | 'done', number>>
 }
@@ -169,7 +179,15 @@ export interface ScrumState {
   archive: WireShelfItem[]
   /** Chart data per sprint (velocity, burndown). Absent on pre-v0.6 servers. */
   stats?: WireSprintStats[]
+  /** The title ceilings (comp-53 R4), read from the Model. Absent on pre-v0.21 servers: no counter then. */
+  limits?: WireTitleLimits
 }
+
+/** The two title ceilings (comp-53). */
+export interface WireTitleLimits { title: number; goal: number }
+
+/** Read-time mark of a stored title/goal over its limit (comp-53 R4): present only on legacy items that overflow. */
+export interface WireOverflow { length: number; limit: number }
 
 /** Kanban columns, in board order. */
 export const COLUMNS = ['todo', 'in_progress', 'review', 'done'] as const

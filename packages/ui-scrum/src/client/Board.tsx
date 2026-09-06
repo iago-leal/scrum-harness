@@ -12,9 +12,9 @@
 
 import { useState } from 'react'
 import { COLUMN_LABELS, COLUMNS, COMPONENT_FLOW, FEATURE_FLOW } from './api.ts'
-import type { ScrumState, WirePhase, WireTask, WireTaskKind } from './api.ts'
+import type { ScrumState, WireOverflow, WirePhase, WireTask, WireTaskKind } from './api.ts'
 import type { BoardLevel } from './store.ts'
-import { aggOf, KindChip, PhaseChip, Rollup, STATUS_META } from './meta.tsx'
+import { aggOf, KindChip, OverflowChip, PhaseChip, Rollup, STATUS_META } from './meta.tsx'
 import type { Agg } from './meta.tsx'
 
 /** Callbacks the board drives. */
@@ -56,6 +56,8 @@ interface BoardItem {
   /** Components only (comp-43 R7): the spiral phase and the Model's ready-for-done marker. */
   phase?: WirePhase
   readyForDone?: boolean
+  /** Legacy title over the limit (comp-53 R6b). */
+  overflow?: WireOverflow
 }
 
 /** Level pivot labels. */
@@ -189,6 +191,7 @@ function Kanban(props: {
                   <span className="scrum-id">{item.id}</span>
                   <KindChip kind={item.taskKind} />
                   {item.phase !== undefined && <PhaseChip status={item.status} phase={item.phase} readyForDone={item.readyForDone} />}
+                  <OverflowChip over={item.overflow} />
                   {item.estimate !== undefined && <span className="scrum-pts">{item.estimate}pt</span>}
                   {item.agg !== undefined && <Rollup agg={item.agg} />}
                   <span style={{ flex: 1 }} />
@@ -265,6 +268,7 @@ export function Board(props: { state: ScrumState; callbacks: BoardCallbacks; ui:
         agg: aggOf(component.tasks),
         phase: component.phase,
         readyForDone: component.readyForDone,
+        overflow: component.titleOverflow,
       })),
     ))
     return (
@@ -293,6 +297,7 @@ export function Board(props: { state: ScrumState; callbacks: BoardCallbacks; ui:
     const items: BoardItem[] = releases.flatMap(release => release.features.map(feature => ({
       id: feature.id,
       title: feature.title,
+      overflow: feature.titleOverflow,
       status: feature.status,
       crumb: release.name,
       agg: aggOf(feature.components.flatMap(c => c.tasks)),
@@ -350,6 +355,7 @@ export function Board(props: { state: ScrumState; callbacks: BoardCallbacks; ui:
   const items: BoardItem[] = tasks.map(task => ({
     id: task.id,
     title: task.title,
+    overflow: task.titleOverflow,
     status: task.status,
     crumb: crumbs.get(task.componentId) ?? task.componentId,
     estimate: task.estimate,

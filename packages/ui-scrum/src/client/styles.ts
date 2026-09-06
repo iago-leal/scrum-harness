@@ -572,6 +572,19 @@ button.scrum-chev:hover { background: var(--bgColor-neutral-muted, rgba(70, 90, 
   background: var(--bgColor-accent-muted, #d8ecff); color: var(--fgColor-accent, #135a9e);
   border-color: var(--borderColor-accent-muted, transparent);
 }
+/* comp-53: the title counter, the legacy-overflow chip and the inline refusal beside inline creation. */
+.scrum-counter { margin-left: 6px; font-weight: 400; font-size: 11px; font-family: var(--fontStack-monospace, ui-monospace, monospace); color: var(--fgColor-muted, #59636e); white-space: nowrap; }
+.scrum-counter.is-warn { color: var(--fgColor-attention, #9a6700); }
+.scrum-counter.is-over { color: var(--fgColor-danger, #d1242f); font-weight: 600; }
+.scrum-chip.st-overflow {
+  cursor: default; flex: none;
+  color: var(--fgColor-attention, #9a6700); background: var(--bgColor-attention-muted, #fff8c5);
+  border-color: var(--borderColor-attention-muted, transparent);
+}
+.scrum-inline-error {
+  font-size: 11px; color: var(--fgColor-danger, #d1242f);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 420px;
+}
 .scrum-chip.st-completed {
   background: var(--bgColor-success-muted, #d9f2df); color: var(--fgColor-success, #1d6b37);
   border-color: var(--borderColor-success-muted, transparent);

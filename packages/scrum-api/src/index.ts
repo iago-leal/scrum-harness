@@ -100,6 +100,8 @@ export function apply(ctx: Context): void {
     sprints: board.sprints(),
     ceremonies: board.ceremonies(),
     activeSprintId: board.activeSprint()?.id ?? null,
+    // comp-53 R4: the title ceilings, read from the Model — the GUI counters never carry a number of their own.
+    limits: board.titleLimits(),
     trash: shelfItems(board.trash(), 'deletedAt'),
     archive: shelfItems(board.archive(), 'archivedAt'),
     stats: sprintStats(board),

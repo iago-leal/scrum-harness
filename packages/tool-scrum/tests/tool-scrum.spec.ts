@@ -705,3 +705,31 @@ describe('scrum_item_update trace notes (comp-49 R8)', () => {
     expect(phase.description).toMatch(/design→tdd needs design carrying a complete trace matrix \(frontmatter traces:\)/)
   })
 })
+
+// ── comp-53: the title contract through the tools (R2, R5) — written before the code ──
+
+describe('title contract (comp-53)', () => {
+  it('R2: scrum_task_create with a 338-char title is refused with the literal message and burns no id', async () => {
+    await run('scrum_release_create', { name: 'v1.0' })
+    await run('scrum_feature_create', { releaseId: 'rel-1', title: 'F' })
+    await run('scrum_component_create', { featureId: 'feat-1', title: 'C' })
+    const refused = await run('scrum_task_create', { componentId: 'comp-1', title: 'x'.repeat(338) })
+    expect(refused.isError).toBe(true)
+    expect(refused.text).toContain('comp-1: title too long: 338 > 80 chars — move the detail to description')
+    const goal = await run('scrum_sprint_plan', { goal: 'g'.repeat(121) })
+    expect(goal.isError).toBe(true)
+    expect(goal.text).toContain('sprint: sprint goal too long: 121 > 120 chars — move the detail to the planning ceremony')
+    const created = await run('scrum_task_create', { componentId: 'comp-1', title: 'fits' })
+    expect(created.text).toContain('task-1')
+  })
+
+  it('R5: scrum_tree carries the title-limit header only when the board has an overflow, after the budget block', async () => {
+    await run('scrum_release_create', { name: 'v1.0' })
+    const clean = await run('scrum_tree', {})
+    expect(clean.text).not.toMatch(/Title limit/)
+    // Nothing on a clean board can overflow through the tools (the gate refuses): plant one through the Model's medium-free path
+    // is not available here, so the header is proved in the domain (format.spec) and the tools only pass overflowSummary through.
+    await run('scrum_suite_budget', { seconds: 10 })
+    expect((await run('scrum_tree', {})).text).toMatch(/^Suite budget: 10s \(board\)\n\n/)
+  })
+})

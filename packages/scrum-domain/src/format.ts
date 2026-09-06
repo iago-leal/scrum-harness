@@ -5,9 +5,9 @@
  */
 
 import { DEFAULT_SUITE_BUDGET_SECONDS, ReviewContract } from './contracts.ts'
-import type { SuiteBudget } from './contracts.ts'
+import type { Overflow, SuiteBudget } from './contracts.ts'
 import type { Ceremony, Component, Sprint, Task } from './spec.ts'
-import type { ImpactHit, ImpactReport, ReviewBriefData, ScrumTree, ShelfLists, SprintStatus } from './service.ts'
+import type { ImpactHit, ImpactReport, OverflowSummary, ReviewBriefData, ScrumTree, ShelfLists, SprintStatus, SprintView } from './service.ts'
 import { TRACE_PROBE_CAP } from './traces.ts'
 import type { TraceMatrixData } from './traces.ts'
 
@@ -27,6 +27,14 @@ export function kindPrefix(task: Pick<Task, 'kind'>): string {
 }
 
 /** " · review stale" when a valid review no longer covers the requirements (never on done components). */
+/**
+ * The read-time overflow mark of a title or goal (comp-53 R5): ` [título longo 338/80]`
+ * / ` [meta longa 810/120]`, empty when the text fits — no noise otherwise.
+ */
+function overflowSuffix(over: Overflow | undefined, noun: 'título longo' | 'meta longa'): string {
+  return over === undefined ? '' : ` [${noun} ${over.length}/${over.limit}]`
+}
+
 function staleSuffix(component: Component): string {
   if (component.status === 'done') return ''
   return new ReviewContract().stale(component) ? ' · review stale' : ''
@@ -142,16 +150,16 @@ export function formatTree(tree: ScrumTree, sprints?: Sprint[]): string {
     const sprintSuffix = linked.length === 0
       ? ''
       : ` (sprints: ${linked.map(s => `${s.id} ${s.status}`).join(', ')})`
-    lines.push(`${release.id} ${release.name} [${release.status}]${target}${sprintSuffix}`)
+    lines.push(`${release.id} ${release.name} [${release.status}]${target}${sprintSuffix}${overflowSuffix(release.titleOverflow, 'título longo')}`)
     for (const feature of release.features) {
-      lines.push(`  ${feature.id} ${feature.title} [${feature.status}]`)
+      lines.push(`  ${feature.id} ${feature.title} [${feature.status}]${overflowSuffix(feature.titleOverflow, 'título longo')}`)
       for (const component of feature.components) {
         const ready = component.readyForDone ? ' · ready for done' : ''
-        lines.push(`    ${component.id} ${component.title} [${component.status} · ${component.phase}${staleSuffix(component)}${ready}]`)
+        lines.push(`    ${component.id} ${component.title} [${component.status} · ${component.phase}${staleSuffix(component)}${ready}]${overflowSuffix(component.titleOverflow, 'título longo')}`)
         for (const task of component.tasks) {
           const points = task.estimate === undefined ? '' : ` (${task.estimate}pt)`
           const sprint = task.sprintId === undefined ? '' : ` @${task.sprintId}`
-          lines.push(`      ${task.id} ${kindPrefix(task)}${task.title} [${task.status}${sprint}]${points}`)
+          lines.push(`      ${task.id} ${kindPrefix(task)}${task.title} [${task.status}${sprint}]${points}${overflowSuffix(task.titleOverflow, 'título longo')}`)
         }
       }
     }
@@ -165,12 +173,12 @@ export function formatTree(tree: ScrumTree, sprints?: Sprint[]): string {
  * @param releaseNames - release-name lookup for the link rendering.
  * @returns one line per sprint.
  */
-export function formatSprints(sprints: Sprint[], releaseNames?: ReleaseNames): string {
+export function formatSprints(sprints: SprintView[], releaseNames?: ReleaseNames): string {
   if (sprints.length === 0) return 'No sprints yet.'
   return sprints
     .map((s) => {
       const window = [s.startDate, s.endDate].filter(Boolean).join(' → ')
-      return `${s.id} #${s.number} "${s.goal}" [${s.status}]${window.length > 0 ? ` ${window}` : ''}${releaseSuffix(s, releaseNames)}`
+      return `${s.id} #${s.number} "${s.goal}" [${s.status}]${window.length > 0 ? ` ${window}` : ''}${releaseSuffix(s, releaseNames)}${overflowSuffix(s.goalOverflow, 'meta longa')}`
     })
     .join('\n')
 }
@@ -183,7 +191,7 @@ export function formatSprints(sprints: Sprint[], releaseNames?: ReleaseNames): s
  */
 export function formatSprintStatus(status: SprintStatus, releaseNames?: ReleaseNames): string {
   const { sprint, tasks, totals } = status
-  const head = `${sprint.id} #${sprint.number} "${sprint.goal}" [${sprint.status}]${releaseSuffix(sprint, releaseNames)}`
+  const head = `${sprint.id} #${sprint.number} "${sprint.goal}" [${sprint.status}]${releaseSuffix(sprint, releaseNames)}${overflowSuffix(sprint.goalOverflow, 'meta longa')}`
   const days = status.daysRemaining === undefined ? '' : `, ${status.daysRemaining} day(s) remaining`
   const progress = `${totals.done}/${totals.tasks} tasks done, ${totals.pointsDone}/${totals.points} points${days}`
   const columns = ['todo', 'in_progress', 'review', 'done'] as const
@@ -362,6 +370,31 @@ export function formatImpact(report: ImpactReport): string {
  * @returns the view, headed by the budget line when there is one.
  */
 export function withBudgetHeader(budget: SuiteBudget, text: string): string {
-  const header = formatSuiteBudget(budget, 'header')
-  return header === null ? text : `${header}\n\n${text}`
+  return withBoardHeader(budget, { titles: 0, goals: 0, limits: { title: 0, goal: 0 } }, text)
+}
+
+/**
+ * The title-limit header line (comp-53 R5): only when the board has at least
+ * one title or goal over its limit — a clean board gets no line (the house
+ * prints headers only off the default).
+ * @param summary - the Model's overflow count with the limits.
+ * @returns the line, or null when there is nothing to say.
+ */
+export function formatOverflowHeader(summary: OverflowSummary): string | null {
+  if (summary.titles + summary.goals === 0) return null
+  return `Title limit: ${summary.limits.title} chars (sprint goal ${summary.limits.goal}) — ${summary.titles} title(s) and ${summary.goals} goal(s) over`
+}
+
+/**
+ * Head a tree view with the board's own lines (comp-50 R3, comp-53 R5): the
+ * suite budget when the board set one, then the title-limit line when
+ * something overflows; nothing at all on a default, clean board.
+ * @param budget - the board's budget.
+ * @param summary - the board's overflow summary.
+ * @param text - the rendered view.
+ * @returns the view, headed by the lines that apply.
+ */
+export function withBoardHeader(budget: SuiteBudget, summary: OverflowSummary, text: string): string {
+  const parts = [formatSuiteBudget(budget, 'header'), formatOverflowHeader(summary)].filter((p): p is string => p !== null)
+  return parts.length === 0 ? text : `${parts.join('\n')}\n\n${text}`
 }

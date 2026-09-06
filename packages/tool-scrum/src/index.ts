@@ -27,7 +27,7 @@ import {
   kindPrefix,
   TASK_KINDS,
   TRACE_PROBE_CAP,
-  withBudgetHeader,
+  withBoardHeader,
 } from '@scrum-harness/domain'
 // Type-only: resolves ctx.scrum for the inject declaration.
 import type {} from '@scrum-harness/domain'
@@ -80,8 +80,8 @@ export function apply(ctx: Context): void {
       const board = await boardOf(exec)
       const sprints = board.sprints()
       const text = `${formatTree(board.tree(), sprints)}\n\nSprints:\n${formatSprints(sprints, board.releaseNames())}`
-      // comp-50 R3: the board's own suite budget heads the view (never on the default).
-      return Promise.resolve({ text: withBudgetHeader(board.suiteBudget(), text) })
+      // comp-50 R3 / comp-53 R5: the board's own suite budget and title-overflow count head the view (never on a clean default board).
+      return Promise.resolve({ text: withBoardHeader(board.suiteBudget(), board.overflowSummary(), text) })
     },
     presentCall: () => ({ card: 'generic', title: 'Read SCRUM tree', kind: 'read' }),
   }))

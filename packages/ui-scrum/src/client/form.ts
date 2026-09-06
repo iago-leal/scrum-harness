@@ -258,3 +258,27 @@ export function phaseLogLines(log: readonly { from: WirePhase; to: WirePhase; at
     return `${entry.from} → ${entry.to} · ${stamp}`
   })
 }
+
+// ── comp-53: the title counter ────────────────────────────────────────────
+
+/** The tone of the counter: muted / attention / danger. */
+export type CounterTone = 'ok' | 'warn' | 'over'
+
+/** The leading `[test]`/`[code]` a task title may carry; the Model drops it before measuring (comp-45). */
+const KIND_PREFIX = /^\[(test|code)\]\s?/i
+
+/**
+ * The counter beside a title/goal input (comp-53 R6): code points of the
+ * trimmed text without a leading kind prefix — the same number the domain
+ * measures (D6: the prefix rule is duplicated here on purpose, like PHASES;
+ * the browser never imports the Model). `warn` from 80% of the limit
+ * (ceil) inclusive, `over` past it. The limit comes from `ScrumState.limits`.
+ * @param text - the input's current value.
+ * @param limit - the ceiling for this field.
+ * @returns the length and its tone.
+ */
+export function titleCounter(text: string, limit: number): { length: number; tone: CounterTone } {
+  const length = [...text.trim().replace(KIND_PREFIX, '')].length
+  const tone: CounterTone = length > limit ? 'over' : length >= Math.ceil(0.8 * limit) ? 'warn' : 'ok'
+  return { length, tone }
+}

@@ -239,6 +239,19 @@ describe('snapshot with a sprint (comp-46 R2)', () => {
     expect(entry).toMatch(/^30 task\(s\) not done \(task-1, task-2/)
   })
 
+  it('comp-53 D4: cut() measures code points — a 64-code-point title with astral emoji is printed whole, 65 is cut to 63 + …', async () => {
+    const { board, componentId } = await seed(join(root, 'p'))
+    const whole = `${'😀'.repeat(10)}${'x'.repeat(54)}` // 64 code points, 74 UTF-16 units
+    const over = `${'😀'.repeat(10)}${'x'.repeat(55)}` // 65 code points
+    const a = await board.createTask({ componentId, title: whole })
+    const b = await board.createTask({ componentId, title: over })
+    const sprint = await board.planSprint({ goal: 'g', taskIds: [a.id, b.id] })
+    await board.startSprint(sprint.id)
+    const todo = lineOf(renderSprintContext(board), 'todo:')!
+    expect(todo).toContain(`${a.id} "${whole}"`)
+    expect(todo).toContain(`${b.id} "${'😀'.repeat(10)}${'x'.repeat(53)}…"`)
+  })
+
   it('R2: components in progress WITHOUT a task in the sprint get their own line — ≤ 5 with +N — and move to Pais: once they have one', async () => {
     const { board, componentId } = await seed(join(root, 'p'))
     // A sprint with no task at all (the state of the spr-16 dogfood).
@@ -306,7 +319,8 @@ describe('snapshot without a sprint (comp-46 R3/R5)', () => {
     const { board, componentId } = await seed(join(root, 'p'))
     const done = await board.createTask({ componentId, title: 'done one', estimate: 3 })
     const open = await board.createTask({ componentId, title: 'left open', estimate: 5 })
-    const goal = 'x'.repeat(200)
+    // comp-53 D5: a valid goal is ≤ 120 code points and is printed whole (GOAL_CHARS = 120).
+    const goal = 'x'.repeat(120)
     const sprint = await board.planSprint({ goal, taskIds: [done.id, open.id] })
     await board.startSprint(sprint.id)
     expect(renderSprintContext(board)).toMatch(/^\[SCRUM · sprint ativa spr-1/)
@@ -314,7 +328,7 @@ describe('snapshot without a sprint (comp-46 R3/R5)', () => {
     await board.endSprint()
     let text = renderSprintContext(board)!
     // Delivered = what stayed done in the sprint (the open task went back to the backlog).
-    expect(lineOf(text, '[SCRUM')).toBe(`[SCRUM · sem sprint ativa] última: spr-1 #1 [completed] 1 tasks · 3 pts entregues — "${'x'.repeat(119)}…"`)
+    expect(lineOf(text, '[SCRUM')).toBe(`[SCRUM · sem sprint ativa] última: spr-1 #1 [completed] 1 tasks · 3 pts entregues — "${'x'.repeat(120)}"`)
     expect(lineOf(text, 'Próximo passo:')).toMatch(/^Próximo passo: planeje a sprint/)
 
     const planned = await board.planSprint({ goal: 'g2', taskIds: [open.id] })
@@ -373,7 +387,7 @@ describe('snapshot without a sprint (comp-46 R3/R5)', () => {
 
   it('R5: the worst case stays ≤ 1800 chars — 20 proposed with long titles and 10 in progress with long reasons', async () => {
     const { board, componentId } = await seed(join(root, 'p'), 'a proposed component with a title longer than forty-eight characters 0')
-    const sprint = await board.planSprint({ goal: 'g'.repeat(300), taskIds: [] })
+    const sprint = await board.planSprint({ goal: 'g'.repeat(120), taskIds: [] })
     await board.startSprint(sprint.id)
     await board.endSprint()
     for (let i = 1; i < 20; i += 1) await board.createComponent({ featureId: 'feat-1', title: `a proposed component with a title longer than forty-eight characters ${i}` })

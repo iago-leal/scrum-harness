@@ -392,3 +392,76 @@ export class ValidationContract extends ArtifactContract<ValidationMeta> {
     return reasons.length === 0 ? { ok: true } : { ok: false, reasons, overBudget }
   }
 }
+
+// ── comp-53: the title contract — a title is a title ───────────────────────
+
+/** Max code points of a release name / feature, component, task title (comp-53 R1). */
+export const TITLE_MAX = 80
+/** Max code points of a sprint goal — the `GOAL_CHARS` the agent snapshot prints whole (comp-53 R1). */
+export const GOAL_MAX = 120
+
+/** Which text the contract is measuring. */
+export type TitleKind = 'title' | 'goal'
+/** A read-time annotation on an item whose stored text is over the limit (legacy media, never persisted). */
+export interface Overflow { length: number; limit: number }
+/** The two ceilings, as Controllers and the View read them (`titleLimits()`, `state.limits`). */
+export interface TitleLimits { title: number; goal: number }
+
+/** Line breaks and control characters: C0, DEL, C1, and the Unicode line/paragraph separators (D7). */
+const CONTROL = /[\u0000-\u001F\u007F-\u009F\u2028\u2029]/u
+
+const NOUN: Record<TitleKind, { subject: string; one: string; where: string }> = {
+  title: { subject: 'title', one: 'titles are one line', where: 'move the detail to description' },
+  goal: { subject: 'sprint goal', one: 'a sprint goal is one line', where: 'move the detail to the planning ceremony' },
+}
+
+/**
+ * The title contract (comp-53): a title fits one line of the backlog, one
+ * card of the board and one line of the agent snapshot. Stateless and
+ * static, a sibling of {@link SuiteBudget} (an {@link ArtifactContract}
+ * governs a component artifact with a frontmatter — this governs a string).
+ * `check` runs on the text the service is about to STORE: already trimmed,
+ * the `[test]`/`[code]` prefix already gone; the empty string is not this
+ * contract's business (`requireTitle` keeps it as `invalid-input`).
+ */
+export class TitleContract {
+  /** @returns the two ceilings. */
+  static limits(): TitleLimits {
+    return { title: TITLE_MAX, goal: GOAL_MAX }
+  }
+
+  /**
+   * Length in code points — an astral emoji counts 1; a ZWJ family or a
+   * flag counts each of its code points.
+   * @param text - the stored text.
+   */
+  static length(text: string): number {
+    return [...text].length
+  }
+
+  /**
+   * Every violated condition, in order: control character first, then length.
+   * @param kind - title or goal.
+   * @param text - the text about to be stored (trimmed, prefix-free).
+   */
+  static check(kind: TitleKind, text: string): ContractResult {
+    const noun = NOUN[kind]
+    const limit = TitleContract.limits()[kind]
+    const reasons: string[] = []
+    if (CONTROL.test(text)) reasons.push(`${noun.subject} contains a line break or control character — ${noun.one}`)
+    const length = TitleContract.length(text)
+    if (length > limit) reasons.push(`${noun.subject} too long: ${length} > ${limit} chars — ${noun.where}`)
+    return reasons.length === 0 ? { ok: true } : { ok: false, reasons }
+  }
+
+  /**
+   * The read-time annotation of a stored text: present only over the limit.
+   * @param kind - title or goal.
+   * @param text - the stored text.
+   */
+  static overflow(kind: TitleKind, text: string): Overflow | undefined {
+    const limit = TitleContract.limits()[kind]
+    const length = TitleContract.length(text)
+    return length > limit ? { length, limit } : undefined
+  }
+}

@@ -4,7 +4,7 @@
  * "review stale" marker on the tree. Written BEFORE the implementation.
  */
 import { describe, expect, it } from 'vitest'
-import { formatReviewBrief, formatTree } from '../src/format.ts'
+import { formatReviewBrief, formatSprints, formatSprintStatus, formatTree, withBoardHeader, withBudgetHeader } from '../src/format.ts'
 import type { ReviewBriefData, ScrumTree } from '../src/service.ts'
 import type { Component } from '../src/spec.ts'
 import { ArtifactContract } from '../src/contracts.ts'
@@ -382,5 +382,63 @@ describe('formatReviewBrief ids and traceability conventions (comp-49 R2, R8)', 
     expect(text).toMatch(/- Traceability: the design frontmatter carries the matrix — traces: then one indented entry per line/)
     expect(text).toMatch(/every requirement id must appear \(files: \[\] for a requirement without code\)/)
     expect(text).toMatch(/Gates: design → tdd and status done\./)
+  })
+})
+
+// ── comp-53: overflow suffixes and the board header (R5) — written before the code ──
+
+describe('title overflow in the text views (comp-53 R5)', () => {
+  const SPRINT = { id: 'spr-1', number: 1, goal: 'G', releaseIds: [], status: 'active' as const, createdAt: '', updatedAt: '' }
+  const treeWith = (over: { release?: boolean; feature?: boolean; component?: boolean; task?: boolean }): ScrumTree => ({
+    releases: [{
+      id: 'rel-1', name: 'R', status: 'active', order: 0, createdAt: '', updatedAt: '',
+      ...over.release ? { titleOverflow: { length: 90, limit: 80 } } : {},
+      features: [{
+        id: 'feat-1', releaseId: 'rel-1', title: 'F', status: 'in_progress', order: 0, createdAt: '', updatedAt: '',
+        ...over.feature ? { titleOverflow: { length: 91, limit: 80 } } : {},
+        components: [{
+          ...component({ id: 'comp-1', title: 'C' }), tasks: [{
+            id: 'task-1', componentId: 'comp-1', title: 'T', kind: 'other', status: 'backlog', order: 0, createdAt: '', updatedAt: '',
+            ...over.task ? { titleOverflow: { length: 338, limit: 80 } } : {},
+          }],
+          readyForDone: false, readiness: NO_READINESS, traces: NO_TRACES,
+          ...over.component ? { titleOverflow: { length: 92, limit: 80 } } : {},
+        }],
+      }],
+    }],
+  })
+
+  it('formatTree appends [título longo N/80] only to the lines with titleOverflow', () => {
+    const clean = formatTree(treeWith({}))
+    expect(clean).not.toMatch(/título longo/)
+    const all = formatTree(treeWith({ release: true, feature: true, component: true, task: true }))
+    expect(all).toMatch(/^rel-1 R \[active\] \[título longo 90\/80\]$/m)
+    expect(all).toMatch(/^  feat-1 F \[in_progress\] \[título longo 91\/80\]$/m)
+    expect(all).toMatch(/^    comp-1 C \[in_progress · requirements\] \[título longo 92\/80\]$/m)
+    expect(all).toMatch(/^      task-1 T \[backlog\] \[título longo 338\/80\]$/m)
+    const one = formatTree(treeWith({ task: true }))
+    expect(one.match(/título longo/g)).toHaveLength(1)
+  })
+
+  it('formatSprints and formatSprintStatus append [meta longa N/120] only with goalOverflow', () => {
+    expect(formatSprints([SPRINT])).toBe('spr-1 #1 "G" [active]')
+    expect(formatSprints([{ ...SPRINT, goalOverflow: { length: 810, limit: 120 } }])).toBe('spr-1 #1 "G" [active] [meta longa 810/120]')
+    const status = { sprint: { ...SPRINT, goalOverflow: { length: 200, limit: 120 } }, tasks: [], totals: { tasks: 0, done: 0, points: 0, pointsDone: 0 } }
+    expect(formatSprintStatus(status).split('\n')[0]).toBe('spr-1 #1 "G" [active] [meta longa 200/120]')
+    expect(formatSprintStatus({ ...status, sprint: SPRINT }).split('\n')[0]).toBe('spr-1 #1 "G" [active]')
+  })
+
+  it('withBoardHeader: no line on a clean board; the title line after the budget block (and alone when the budget is default)', () => {
+    const limits = { title: 80, goal: 120 }
+    const defaultBudget = SuiteBudget.fromGlobal({})
+    expect(withBoardHeader(defaultBudget, { titles: 0, goals: 0, limits }, 'body')).toBe('body')
+    expect(withBoardHeader(defaultBudget, { titles: 58, goals: 19, limits }, 'body'))
+      .toBe('Title limit: 80 chars (sprint goal 120) — 58 title(s) and 19 goal(s) over\n\nbody')
+    const boardBudget = SuiteBudget.fromGlobal({ suiteBudget: { seconds: 10, setAt: '2026-09-02T00:00:00.000Z' } })
+    expect(withBoardHeader(boardBudget, { titles: 0, goals: 0, limits }, 'body')).toBe('Suite budget: 10s (board)\n\nbody')
+    expect(withBoardHeader(boardBudget, { titles: 1, goals: 0, limits }, 'body'))
+      .toBe('Suite budget: 10s (board)\nTitle limit: 80 chars (sprint goal 120) — 1 title(s) and 0 goal(s) over\n\nbody')
+    // The old helper stays as the clean-board case.
+    expect(withBudgetHeader(boardBudget, 'body')).toBe('Suite budget: 10s (board)\n\nbody')
   })
 })

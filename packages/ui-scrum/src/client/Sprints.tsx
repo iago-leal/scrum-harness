@@ -7,14 +7,16 @@
 import { useState } from 'react'
 import type { ScrumState, WireCeremony, WireRelease, WireSprint, WireSprintStats, WireTask } from './api.ts'
 import { Burndown, Velocity } from './Charts.tsx'
-import { StateDot } from './meta.tsx'
+import { Counter, OverflowChip, StateDot } from './meta.tsx'
+import type { RunOutcome } from './settle.ts'
 
 /** Minimal release option for the link selectors. */
 type ReleaseOption = Pick<WireRelease, 'id' | 'name'>
 
 /** Callbacks the sprint section drives. */
 export interface SprintsCallbacks {
-  run: (action: Record<string, unknown>) => void
+  /** The outcome lets the plan form keep its draft on a refusal (comp-53 D1). */
+  run: (action: Record<string, unknown>) => Promise<RunOutcome>
 }
 
 const CEREMONY_LABELS: Record<WireCeremony['type'], string> = {
@@ -154,6 +156,7 @@ function SprintCard(props: {
       <div className="scrum-sprint-head">
         <span className="scrum-id">{sprint.id}</span>
         <span className="scrum-goal">#{sprint.number} {sprint.goal}</span>
+        <OverflowChip over={sprint.goalOverflow} noun="meta longa" />
         <StateDot status={sprint.status} />
         <ReleaseLink sprint={sprint} releases={props.releases} onRun={props.onRun} />
         {window.length > 0 && <span className="scrum-muted">{window}</span>}
@@ -236,15 +239,18 @@ export function Sprints(props: { state: ScrumState; callbacks: SprintsCallbacks 
         <div className="scrum-form" style={{ marginLeft: 0 }}>
           <PlanForm
             releases={props.state.tree.releases}
-            onConfirm={(goal, releaseId, startDate, endDate) => {
-              run({
+            limit={props.state.limits?.goal}
+            onConfirm={async (goal, releaseId, startDate, endDate) => {
+              // comp-53 D1: the form closes only on `ok`; a refusal keeps the draft and shows the reason.
+              const outcome = await run({
                 action: 'planSprint',
                 goal,
                 ...releaseId.length > 0 ? { releaseId } : {},
                 ...startDate.length > 0 ? { startDate } : {},
                 ...endDate.length > 0 ? { endDate } : {},
               })
-              setPlanning(false)
+              if (outcome.ok) setPlanning(false)
+              return outcome
             }}
             onCancel={() => { setPlanning(false) }}
           />
@@ -271,14 +277,21 @@ export function Sprints(props: { state: ScrumState; callbacks: SprintsCallbacks 
 /** Sprint-planning inputs (goal + optional release link + optional window). */
 function PlanForm(props: {
   releases: ReleaseOption[]
-  onConfirm: (goal: string, releaseId: string, start: string, end: string) => void
+  /** The goal ceiling for the counter (comp-53 R6c); absent → no counter. */
+  limit?: number
+  onConfirm: (goal: string, releaseId: string, start: string, end: string) => Promise<RunOutcome>
   onCancel: () => void
 }) {
   const [goal, setGoal] = useState('')
   const [releaseId, setReleaseId] = useState('')
   const [start, setStart] = useState('')
   const [end, setEnd] = useState('')
-  const confirm = () => { if (goal.trim().length > 0) props.onConfirm(goal.trim(), releaseId, start, end) }
+  const [error, setError] = useState<string | null>(null)
+  const confirm = async () => {
+    if (goal.trim().length === 0) return
+    const outcome = await props.onConfirm(goal.trim(), releaseId, start, end)
+    setError(outcome.ok ? null : outcome.message)
+  }
   return (
     <>
       <input
@@ -286,9 +299,10 @@ function PlanForm(props: {
         placeholder="Meta da sprint (sprint goal)"
         autoFocus
         value={goal}
-        onChange={(e) => { setGoal(e.target.value) }}
-        onKeyDown={(e) => { if (e.key === 'Enter') confirm() }}
+        onChange={(e) => { setGoal(e.target.value); setError(null) }}
+        onKeyDown={(e) => { if (e.key === 'Enter') void confirm() }}
       />
+      <Counter text={goal} limit={props.limit} />
       <select title="Release vinculada" value={releaseId} onChange={(e) => { setReleaseId(e.target.value) }}>
         <option value="">— sem release —</option>
         {props.releases.map(release => (
@@ -297,7 +311,8 @@ function PlanForm(props: {
       </select>
       <input placeholder="Início (AAAA-MM-DD)" value={start} onChange={(e) => { setStart(e.target.value) }} />
       <input placeholder="Fim (AAAA-MM-DD)" value={end} onChange={(e) => { setEnd(e.target.value) }} />
-      <button className="scrum-btn primary" onClick={confirm}>Planejar</button>
+      <button className="scrum-btn primary" onClick={() => { void confirm() }}>Planejar</button>
+      {error !== null && <span className="scrum-inline-error" title={error}>{error}</span>}
       <button className="scrum-btn" onClick={props.onCancel}>Cancelar</button>
     </>
   )

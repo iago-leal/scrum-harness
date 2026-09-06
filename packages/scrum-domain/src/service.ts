@@ -18,8 +18,8 @@ import { Context, Service } from '@deepseek-ai/cordis'
 import type { Domain, TableKeyOf, TableValueOf } from '@deepseek-ai/dsh-storage-domain'
 import { boardNameOf } from './boards.ts'
 import { ScrumError } from './error.ts'
-import { ReviewContract, SuiteBudget, ValidationContract } from './contracts.ts'
-import type { ContractResult, ReviewMeta, ValidationResult } from './contracts.ts'
+import { ReviewContract, SuiteBudget, TitleContract, ValidationContract } from './contracts.ts'
+import type { ContractResult, Overflow, ReviewMeta, TitleKind, TitleLimits, ValidationResult } from './contracts.ts'
 import { TraceContract, TraceMatrix, matchPath, normalizePath, pathIssue, traceGateFor } from './traces.ts'
 import type { TraceField, TraceGate, TraceMatrixData } from './traces.ts'
 import { TASK_KINDS, splitKindPrefix, taskNumber } from './kind.ts'
@@ -180,16 +180,26 @@ export interface PhaseReadiness {
 
 /** The whole hierarchy as nested data, for tools and the web board. */
 export interface ScrumTree {
-  releases: (Release & {
-    features: (Feature & {
+  releases: (Release & Overflowed & {
+    features: (Feature & Overflowed & {
       /**
-       * `readyForDone` (comp-47), `readiness` (comp-46) and `traces`
-       * (comp-49): computed in the Model on every read, never persisted.
+       * `readyForDone` (comp-47), `readiness` (comp-46), `traces`
+       * (comp-49) and `titleOverflow` (comp-53): computed in the Model on
+       * every read, never persisted.
        */
-      components: (Component & { tasks: Task[]; readyForDone: boolean; readiness: PhaseReadiness; traces: TraceMatrixData })[]
+      components: (Component & Overflowed & { tasks: (Task & Overflowed)[]; readyForDone: boolean; readiness: PhaseReadiness; traces: TraceMatrixData })[]
     })[]
   })[]
 }
+
+/** Read-time mark of a stored title over the limit (comp-53 R4): present only when it overflows. */
+export interface Overflowed { titleOverflow?: Overflow }
+
+/** A sprint as read: the record plus the read-time mark of a goal over the limit (comp-53 R4). */
+export type SprintView = Sprint & { goalOverflow?: Overflow }
+
+/** How many live titles and how many goals stand over their limit, with the limits (comp-53 D3). */
+export interface OverflowSummary { titles: number; goals: number; limits: TitleLimits }
 
 /** One entry of a component's matrix that answered an impact query (comp-49 R5). */
 export interface ImpactHit {
@@ -247,7 +257,7 @@ type HierRecord = Release | Feature | Component | Task
 
 /** Sprint progress summary (simple burndown numbers). */
 export interface SprintStatus {
-  sprint: Sprint
+  sprint: SprintView
   tasks: Task[]
   totals: { tasks: number; done: number; points: number; pointsDone: number }
   /** Whole days until `endDate`, when the sprint declares one. */
@@ -343,11 +353,13 @@ export class ScrumBoard {
    * @returns the stored release.
    */
   async createRelease(input: CreateReleaseInput): Promise<Release> {
+    // Validated BEFORE the id is allocated (comp-53 R2): a refusal never burns a counter value.
+    const name = this.checkTitle('title', this.requireName(input.name), 'release')
     const id = await this.nextId('release', 'rel')
     const now = this.now()
     const release: Release = {
       id,
-      name: input.name.trim(),
+      name,
       ...input.description === undefined ? {} : { description: input.description },
       ...input.targetDate === undefined ? {} : { targetDate: input.targetDate },
       status: 'planned',
@@ -355,7 +367,6 @@ export class ScrumBoard {
       createdAt: now,
       updatedAt: now,
     }
-    if (release.name.length === 0) throw new ScrumError('invalid-input', 'release name must be non-empty')
     await this.domain.table('releases').put(id, release)
     return release
   }
@@ -367,12 +378,13 @@ export class ScrumBoard {
    */
   async createFeature(input: CreateFeatureInput): Promise<Feature> {
     this.mustGetLive('releases', input.releaseId)
+    const title = this.checkTitle('title', this.requireTitle(input.title), 'feature')
     const id = await this.nextId('feature', 'feat')
     const now = this.now()
     const feature: Feature = {
       id,
       releaseId: input.releaseId,
-      title: this.requireTitle(input.title),
+      title,
       ...input.description === undefined ? {} : { description: input.description },
       status: 'proposed',
       order: this.domain.table('features').size,
@@ -390,12 +402,13 @@ export class ScrumBoard {
    */
   async createComponent(input: CreateComponentInput): Promise<Component> {
     this.mustGetLive('features', input.featureId)
+    const title = this.checkTitle('title', this.requireTitle(input.title), 'component')
     const id = await this.nextId('component', 'comp')
     const now = this.now()
     const component: Component = {
       id,
       featureId: input.featureId,
-      title: this.requireTitle(input.title),
+      title,
       ...input.description === undefined ? {} : { description: input.description },
       status: 'proposed',
       phase: 'requirements',
@@ -418,6 +431,7 @@ export class ScrumBoard {
     // Kind and title are resolved BEFORE the id is allocated (comp-45 P2):
     // a refused input never burns a counter value.
     const resolved = this.resolveTaskKind(input.title, input.kind, undefined, input.componentId)
+    this.checkTitle('title', resolved.title, input.componentId)
     const id = await this.nextId('task', 'task')
     const now = this.now()
     const task: Task = {
@@ -457,17 +471,20 @@ export class ScrumBoard {
         .sort(byOrder)
         .map(release => ({
           ...release,
+          ...this.marked(release.name),
           features: features
             .filter(f => f.releaseId === release.id)
             .sort(byOrder)
             .map(feature => ({
               ...feature,
+              ...this.marked(feature.title),
               components: components
                 .filter(c => c.featureId === feature.id)
                 .sort(byOrder)
                 .map(component => ({
                   ...component,
-                  tasks: tasks.filter(t => t.componentId === component.id).sort(byOrder),
+                  ...this.marked(component.title),
+                  tasks: tasks.filter(t => t.componentId === component.id).sort(byOrder).map(t => ({ ...t, ...this.marked(t.title) })),
                   readyForDone: component.status !== 'done' && this.doneGate(component).length === 0,
                   readiness: this.readinessOf(component),
                   // comp-49 R5: the matrix as data, done components included (the GUI shows history too).
@@ -478,16 +495,53 @@ export class ScrumBoard {
     }
   }
 
-  /** @returns every sprint, newest number first. */
-  sprints(): Sprint[] {
+  /** @returns every sprint, newest number first, each marked when its goal is over the limit (comp-53 R4). */
+  sprints(): SprintView[] {
     return [...this.domain.table('sprints').entries()]
-      .map(([, sprint]) => sprint)
+      .map(([, sprint]) => this.sprintView(sprint))
       .sort((a, b) => b.number - a.number)
   }
 
   /** @returns the single active sprint, or undefined. */
-  activeSprint(): Sprint | undefined {
+  activeSprint(): SprintView | undefined {
     return this.sprints().find(s => s.status === 'active')
+  }
+
+  /** The two title ceilings, as Controllers and the View read them (comp-53 R1/D9). */
+  titleLimits(): TitleLimits {
+    return TitleContract.limits()
+  }
+
+  /**
+   * How many live titles (the four levels of the tree) and how many goals
+   * (every sprint) stand over their limit (comp-53 D3) — feeds the header line.
+   */
+  overflowSummary(): OverflowSummary {
+    let titles = 0
+    for (const release of this.tree().releases) {
+      if (release.titleOverflow !== undefined) titles += 1
+      for (const feature of release.features) {
+        if (feature.titleOverflow !== undefined) titles += 1
+        for (const component of feature.components) {
+          if (component.titleOverflow !== undefined) titles += 1
+          for (const task of component.tasks) if (task.titleOverflow !== undefined) titles += 1
+        }
+      }
+    }
+    const goals = this.sprints().filter(s => s.goalOverflow !== undefined).length
+    return { titles, goals, limits: this.titleLimits() }
+  }
+
+  /** The read-time title mark of one stored text (comp-53 R4): an object to spread, empty when it fits. */
+  private marked(text: string): Overflowed {
+    const over = TitleContract.overflow('title', text)
+    return over === undefined ? {} : { titleOverflow: over }
+  }
+
+  /** A sprint record as read, marked when its goal is over the limit (comp-53 R4). */
+  private sprintView(sprint: Sprint): SprintView {
+    const over = TitleContract.overflow('goal', sprint.goal)
+    return over === undefined ? sprint : { ...sprint, goalOverflow: over }
   }
 
   /**
@@ -495,7 +549,7 @@ export class ScrumBoard {
    * @param releaseId - the release id.
    * @returns the linked sprints.
    */
-  sprintsOfRelease(releaseId: string): Sprint[] {
+  sprintsOfRelease(releaseId: string): SprintView[] {
     return this.sprints().filter(s => s.releaseIds.includes(releaseId))
   }
 
@@ -540,9 +594,10 @@ export class ScrumBoard {
    * @returns sprint, its tasks, and burndown totals.
    */
   sprintStatus(sprintId?: string): SprintStatus {
-    const sprint = sprintId === undefined
+    const stored = sprintId === undefined
       ? this.activeSprint()
       : this.domain.table('sprints').get(sprintId)
+    const sprint = stored === undefined ? undefined : this.sprintView(stored)
     if (sprint === undefined) {
       throw new ScrumError('not-found', sprintId === undefined
         ? 'no active sprint'
@@ -583,7 +638,7 @@ export class ScrumBoard {
       this.mustGetLive('releases', id)
       return this.domain.table('releases').update(id, current => ({
         ...current,
-        ...patch.title === undefined ? {} : { name: patch.title },
+        ...patch.title === undefined ? {} : { name: this.checkTitle('title', this.requireName(patch.title), id) },
         ...patch.description === undefined ? {} : { description: patch.description },
         ...patch.targetDate === undefined ? {} : { targetDate: patch.targetDate },
         ...patch.status === undefined ? {} : { status: this.narrowStatus(patch.status, RELEASE_STATUSES, id) },
@@ -594,7 +649,7 @@ export class ScrumBoard {
       this.mustGetLive('features', id)
       return this.domain.table('features').update(id, current => ({
         ...current,
-        ...patch.title === undefined ? {} : { title: this.requireTitle(patch.title) },
+        ...patch.title === undefined ? {} : { title: this.checkTitle('title', this.requireTitle(patch.title), id) },
         ...patch.description === undefined ? {} : { description: patch.description },
         ...patch.status === undefined ? {} : { status: this.narrowStatus(patch.status, FEATURE_STATUSES, id) },
         ...stamp,
@@ -605,7 +660,7 @@ export class ScrumBoard {
       return this.domain.table('components').update(id, (current) => {
         const next: Component = {
           ...current,
-          ...patch.title === undefined ? {} : { title: this.requireTitle(patch.title) },
+          ...patch.title === undefined ? {} : { title: this.checkTitle('title', this.requireTitle(patch.title), id) },
           ...patch.description === undefined ? {} : { description: patch.description },
           ...patch.status === undefined ? {} : { status: this.narrowStatus(patch.status, COMPONENT_STATUSES, id) },
           ...stamp,
@@ -633,6 +688,7 @@ export class ScrumBoard {
       // Title and kind go through the one precedence rule (comp-45 R2); a
       // refusal throws here, before the mutator, and leaves the record intact.
       const resolved = this.resolveTaskKind(patch.title, patch.kind, live.kind, id)
+      if (resolved.title !== undefined) this.checkTitle('title', resolved.title, id)
       return this.domain.table('tasks').update(id, current => ({
         ...current,
         ...resolved.title === undefined ? {} : { title: resolved.title },
@@ -649,7 +705,7 @@ export class ScrumBoard {
       return this.domain.table('sprints').update(id, (current) => {
         const next: Sprint = {
           ...current,
-          ...patch.goal === undefined ? {} : { goal: this.requireTitle(patch.goal) },
+          ...patch.goal === undefined ? {} : { goal: this.checkTitle('goal', this.requireTitle(patch.goal), id) },
           ...releaseIds === undefined ? {} : { releaseIds },
           ...stamp,
         }
@@ -1377,13 +1433,15 @@ export class ScrumBoard {
         throw new ScrumError('task-already-in-sprint', `task '${taskId}' already belongs to sprint '${task.sprintId}'`)
       }
     }
+    // Validated BEFORE the id and the number are allocated (comp-53 R2).
+    const goal = this.checkTitle('goal', this.requireTitle(input.goal), 'sprint')
     const id = await this.nextId('sprint', 'spr')
     const counters = this.global()
     const now = this.now()
     const sprint: Sprint = {
       id,
       number: counters.sprint,
-      goal: this.requireTitle(input.goal),
+      goal,
       releaseIds,
       ...input.startDate === undefined ? {} : { startDate: input.startDate },
       ...input.endDate === undefined ? {} : { endDate: input.endDate },
@@ -1589,6 +1647,29 @@ export class ScrumBoard {
     const trimmed = title.trim()
     if (trimmed.length === 0) throw new ScrumError('invalid-input', 'title must be non-empty')
     return trimmed
+  }
+
+  /** @returns the trimmed release name or throws `invalid-input` (comp-53 R3: now also on update). */
+  private requireName(name: string): string {
+    const trimmed = name.trim()
+    if (trimmed.length === 0) throw new ScrumError('invalid-input', 'release name must be non-empty')
+    return trimmed
+  }
+
+  /**
+   * The title contract at every write of a title/goal (comp-53 R2): the text
+   * is what will be stored (trimmed, prefix-free). Stateless — runs where
+   * `requireTitle` runs, reads no current state.
+   * @param kind - title or goal.
+   * @param text - the text about to be stored.
+   * @param where - what the refusal names: the item id on update, the level or the parent on create.
+   * @returns `text` unchanged.
+   * @throws ScrumError `title-contract` with every reason, `; `-joined.
+   */
+  private checkTitle(kind: TitleKind, text: string, where: string): string {
+    const result = TitleContract.check(kind, text)
+    if (!result.ok) throw new ScrumError('title-contract', `${where}: ${result.reasons.join('; ')}`)
+    return text
   }
 
   /** @returns `value` narrowed to the allowed status set or throws. */

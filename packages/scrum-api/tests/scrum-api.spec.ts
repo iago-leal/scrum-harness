@@ -343,3 +343,29 @@ describe('traces on the wire (comp-49 R5)', () => {
     expect((await act({ action: 'trace', path: 'src/a.ts' } as never)).status).toBe(400)
   })
 })
+
+// ── comp-53: the title contract on the wire (R2, R4) — written before the code ──
+
+describe('title contract (comp-53)', () => {
+  it('R2: a too-long title is a 409 with code title-contract and the literal message', async () => {
+    await act({ action: 'createRelease', name: 'v1.0' })
+    await act({ action: 'createFeature', releaseId: 'rel-1', title: 'F' })
+    await act({ action: 'createComponent', featureId: 'feat-1', title: 'C' })
+    const refused = await act({ action: 'createTask', componentId: 'comp-1', title: 'x'.repeat(338) })
+    expect(refused.status).toBe(409)
+    expect(refused.json.code).toBe('title-contract')
+    expect(refused.json.message).toBe('comp-1: title too long: 338 > 80 chars — move the detail to description')
+    const goal = await act({ action: 'planSprint', goal: 'g'.repeat(121) })
+    expect(goal.status).toBe(409)
+    expect(goal.json.code).toBe('title-contract')
+  })
+
+  it('R4: state carries limits from the Model, and no titleOverflow/goalOverflow on items that fit', async () => {
+    await act({ action: 'createRelease', name: 'v1.0' })
+    await act({ action: 'planSprint', goal: 'g' })
+    const current = await state()
+    expect(current.state.limits).toEqual({ title: 80, goal: 120 })
+    expect(current.state.tree.releases[0]).not.toHaveProperty('titleOverflow')
+    expect(current.state.sprints[0]).not.toHaveProperty('goalOverflow')
+  })
+})

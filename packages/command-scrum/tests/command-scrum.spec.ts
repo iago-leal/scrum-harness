@@ -73,3 +73,17 @@ describe('/scrum (command-scrum)', () => {
     expect((await slash('sprints')).text).not.toMatch(/Suite budget/)
   })
 })
+
+// ── comp-53 R5: the title-limit header rides the same helper as the budget header ──
+
+describe('title-limit header (comp-53 R5)', () => {
+  it('is absent on a clean board and never displaces the budget header', async () => {
+    expect((await slash('tree')).text).not.toMatch(/Title limit/)
+    const board = await ctx.scrum.board(currentWs)
+    await board.setSuiteBudget(10)
+    expect((await slash('tree')).text).toMatch(/^Suite budget: 10s \(board\)\n\n/)
+    expect((await slash('tree')).text).not.toMatch(/Title limit/)
+    // The overflow summary is the Model's: a clean board reports zero.
+    expect(board.overflowSummary()).toEqual({ titles: 0, goals: 0, limits: { title: 80, goal: 120 } })
+  })
+})

@@ -25,7 +25,7 @@ import type { ArtifactField, FormDrafts, FormServer, PhaseStep } from './form.ts
 import { createRenderer, mermaidBlocks, previewByDefault, svgNaturalWidth } from './mermaid.ts'
 import type { Block, BlockState, Renderer, Theme } from './mermaid.ts'
 import type { MermaidEngine } from './mermaid-engine.ts'
-import { KIND_META, StateDot, TypeIcon } from './meta.tsx'
+import { Counter, KIND_META, StateDot, TypeIcon } from './meta.tsx'
 import type { RunOutcome } from './settle.ts'
 
 /** Typing pause before the preview repaints (comp-44 R4). */
@@ -206,6 +206,8 @@ export function WorkItemForm(props: {
   engine: MermaidEngine
   /** The panel theme (comp-44 R6c): a change repaints every diagram. */
   theme: Theme
+  /** The title ceilings from the Model (comp-53 R6a); absent on an old server → no counter. */
+  limits?: { title: number; goal: number }
 }) {
   const { node, onClose, engine, theme } = props
   const server = serverOf(node)
@@ -384,7 +386,7 @@ export function WorkItemForm(props: {
         {node.crumb !== undefined && <div className="scrum-details-crumb">{node.crumb}</div>}
 
         <label className="scrum-field">
-          <span>Título</span>
+          <span>Título <Counter text={drafts.title} limit={props.limits?.title} /></span>
           <input
             value={drafts.title}
             onChange={(e) => { const title = e.target.value; setDrafts(current => ({ ...current, title })) }}

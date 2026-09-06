@@ -1617,3 +1617,160 @@ describe('impact (comp-49 R5)', () => {
     expect(scrum.traceGate(live, 'validation')).toBeNull()
   })
 })
+
+// ── comp-53: the title contract in the service (R2, R3, R4) — written before the code ──
+
+const LONG = 'x'.repeat(338)
+const TOO_LONG_TITLE = (where: string) => `${where}: title too long: 338 > 80 chars — move the detail to description`
+const LONG_GOAL = 'g'.repeat(200)
+
+describe('title contract — where the gate bites (comp-53 R2, R3)', () => {
+  it('the seven writes refuse a too-long title/goal with title-contract and the literal message', async () => {
+    const componentId = await seedComponent()
+    await expect(scrum.createRelease({ name: LONG })).rejects.toMatchObject({ code: 'title-contract', message: TOO_LONG_TITLE('release') })
+    await expect(scrum.createFeature({ releaseId: 'rel-1', title: LONG })).rejects.toMatchObject({ code: 'title-contract', message: TOO_LONG_TITLE('feature') })
+    await expect(scrum.createComponent({ featureId: 'feat-1', title: LONG })).rejects.toMatchObject({ code: 'title-contract', message: TOO_LONG_TITLE('component') })
+    await expect(scrum.createTask({ componentId, title: LONG })).rejects.toMatchObject({ code: 'title-contract', message: TOO_LONG_TITLE(componentId) })
+    await expect(scrum.planSprint({ goal: LONG_GOAL })).rejects.toMatchObject({
+      code: 'title-contract', message: 'sprint: sprint goal too long: 200 > 120 chars — move the detail to the planning ceremony',
+    })
+    const task = await scrum.createTask({ componentId, title: 'fits' })
+    const sprint = await scrum.planSprint({ goal: 'fits' })
+    await expect(scrum.updateItem('rel-1', { title: LONG })).rejects.toMatchObject({ code: 'title-contract', message: TOO_LONG_TITLE('rel-1') })
+    await expect(scrum.updateItem('feat-1', { title: LONG })).rejects.toMatchObject({ code: 'title-contract', message: TOO_LONG_TITLE('feat-1') })
+    await expect(scrum.updateItem(componentId, { title: LONG })).rejects.toMatchObject({ code: 'title-contract', message: TOO_LONG_TITLE(componentId) })
+    await expect(scrum.updateItem(task.id, { title: LONG })).rejects.toMatchObject({ code: 'title-contract', message: TOO_LONG_TITLE(task.id) })
+    await expect(scrum.updateItem(sprint.id, { goal: LONG_GOAL })).rejects.toMatchObject({
+      code: 'title-contract', message: `${sprint.id}: sprint goal too long: 200 > 120 chars — move the detail to the planning ceremony`,
+    })
+    // A line break is refused too, with its own reason; a refusal leaves the record intact.
+    await expect(scrum.updateItem(task.id, { title: 'two\nlines' })).rejects.toMatchObject({
+      code: 'title-contract', message: `${task.id}: title contains a line break or control character — titles are one line`,
+    })
+    expect(scrum.tree().releases[0]!.features[0]!.components[0]!.tasks[0]!.title).toBe('fits')
+    expect(scrum.sprints()[0]!.goal).toBe('fits')
+  })
+
+  it('a refused create/planSprint never burns a counter: ids stay consecutive and the sprint number too', async () => {
+    const componentId = await seedComponent()
+    await expect(scrum.createRelease({ name: LONG })).rejects.toMatchObject({ code: 'title-contract' })
+    await expect(scrum.createFeature({ releaseId: 'rel-1', title: LONG })).rejects.toMatchObject({ code: 'title-contract' })
+    await expect(scrum.createComponent({ featureId: 'feat-1', title: LONG })).rejects.toMatchObject({ code: 'title-contract' })
+    await expect(scrum.createTask({ componentId, title: LONG })).rejects.toMatchObject({ code: 'title-contract' })
+    await expect(scrum.planSprint({ goal: LONG_GOAL })).rejects.toMatchObject({ code: 'title-contract' })
+    expect((await scrum.createRelease({ name: 'v2' })).id).toBe('rel-2')
+    expect((await scrum.createFeature({ releaseId: 'rel-1', title: 'f' })).id).toBe('feat-2')
+    expect((await scrum.createComponent({ featureId: 'feat-1', title: 'c' })).id).toBe('comp-2')
+    expect((await scrum.createTask({ componentId, title: 't' })).id).toBe('task-1')
+    const sprint = await scrum.planSprint({ goal: 'g' })
+    expect(sprint.id).toBe('spr-1')
+    expect(sprint.number).toBe(1)
+  })
+
+  it('the contract measures the stored title: the [test]/[code] prefix is dropped first, and kind-conflict wins over length (L4)', async () => {
+    const componentId = await seedComponent()
+    // 74 chars after the prefix: fits.
+    const ok = await scrum.createTask({ componentId, title: `[test] ${'y'.repeat(74)}` })
+    expect(ok).toMatchObject({ kind: 'test', title: 'y'.repeat(74) })
+    await expect(scrum.createTask({ componentId, title: `[test] ${'y'.repeat(81)}` }))
+      .rejects.toMatchObject({ code: 'title-contract', message: `${componentId}: title too long: 81 > 80 chars — move the detail to description` })
+    await expect(scrum.createTask({ componentId, title: `[test] ${LONG}`, kind: 'code' }))
+      .rejects.toMatchObject({ code: 'kind-conflict' })
+    // Code points, not UTF-16 units: 80 astral emoji fit.
+    const emoji = await scrum.createTask({ componentId, title: '😀'.repeat(80) })
+    expect(emoji.title).toBe('😀'.repeat(80))
+  })
+
+  it('empty stays invalid-input — and updateItem of a release now trims and refuses an empty name (R3, L6)', async () => {
+    const componentId = await seedComponent()
+    await expect(scrum.createTask({ componentId, title: '   ' })).rejects.toMatchObject({ code: 'invalid-input', message: 'title must be non-empty' })
+    await expect(scrum.createTask({ componentId, title: '\n\n' })).rejects.toMatchObject({ code: 'invalid-input' })
+    await expect(scrum.createRelease({ name: ' ' })).rejects.toMatchObject({ code: 'invalid-input', message: 'release name must be non-empty' })
+    await expect(scrum.updateItem('rel-1', { title: '  ' })).rejects.toMatchObject({ code: 'invalid-input', message: 'release name must be non-empty' })
+    const renamed = await scrum.updateItem('rel-1', { title: '  v1.1  ' })
+    expect(renamed).toMatchObject({ name: 'v1.1' })
+  })
+})
+
+describe('title contract — legacy read, marked, never rejected (comp-53 R4)', () => {
+  let lifeRoot: string
+  let life: Context
+
+  beforeEach(async () => {
+    lifeRoot = mkdtempSync(join(tmpdir(), 'scrum-domain-title-'))
+    life = await openJsonStack(lifeRoot)
+  })
+
+  afterEach(async () => {
+    await life.dispose?.()
+    rmSync(lifeRoot, { recursive: true, force: true })
+  })
+
+  /** Plants a 300-char task title and a 200-char sprint goal straight into the medium (pre-v0.21 records). */
+  async function plantLegacy(): Promise<{ taskId: string; sprintId: string }> {
+    const board = await life.scrum.board()
+    const release = await board.createRelease({ name: 'v1.0' })
+    const feature = await board.createFeature({ releaseId: release.id, title: 'Login' })
+    const component = await board.createComponent({ featureId: feature.id, title: 'OAuth flow' })
+    const task = await board.createTask({ componentId: component.id, title: 'short' })
+    const sprint = await board.planSprint({ goal: 'short goal', taskIds: [task.id] })
+    await board.startSprint(sprint.id)
+    await life.dispose?.()
+    const medium = join(lifeRoot, `${GLOBAL_BOARD_NAME}.json`)
+    const raw = JSON.parse(readFileSync(medium, 'utf8')) as { tables: { tasks: Record<string, Record<string, unknown>>; sprints: Record<string, Record<string, unknown>> } }
+    raw.tables.tasks[task.id]!['title'] = 'L'.repeat(300)
+    raw.tables.sprints[sprint.id]!['goal'] = 'G'.repeat(200)
+    writeFileSync(medium, JSON.stringify(raw))
+    life = await openJsonStack(lifeRoot)
+    return { taskId: task.id, sprintId: sprint.id }
+  }
+
+  it('legacy media parses; tree() carries titleOverflow only on the item over the limit; sprints/activeSprint/sprintStatus carry goalOverflow', async () => {
+    const { taskId, sprintId } = await plantLegacy()
+    const board = await life.scrum.board()
+    const component = board.tree().releases[0]!.features[0]!.components[0]!
+    const task = component.tasks[0]!
+    expect(task.title).toBe('L'.repeat(300))
+    expect(task.titleOverflow).toEqual({ length: 300, limit: 80 })
+    expect(component.titleOverflow).toBeUndefined()
+    expect(board.tree().releases[0]!.titleOverflow).toBeUndefined()
+    expect(board.sprints()[0]!.goalOverflow).toEqual({ length: 200, limit: 120 })
+    expect(board.activeSprint()!.goalOverflow).toEqual({ length: 200, limit: 120 })
+    expect(board.sprintStatus(sprintId).sprint.goalOverflow).toEqual({ length: 200, limit: 120 })
+    expect(board.overflowSummary()).toEqual({ titles: 1, goals: 1, limits: { title: 80, goal: 120 } })
+    expect(board.titleLimits()).toEqual({ title: 80, goal: 120 })
+    void taskId
+  })
+
+  it('a legacy item stays operable: every write that is not a title/goal write passes; re-sending the same long title is refused', async () => {
+    const { taskId, sprintId } = await plantLegacy()
+    const board = await life.scrum.board()
+    await board.updateItem(taskId, { estimate: 5, description: 'still fine' })
+    await board.moveTask(taskId, 'in_progress')
+    await board.moveTask(taskId, 'done')
+    await board.updateItem(sprintId, { wipLimits: { in_progress: 2 } })
+    await board.updateItem('comp-1', { status: 'in_progress', requirements: '---\nversion: 1\n---\nR1 — x' })
+    await board.advancePhase('comp-1').catch(() => undefined) // gate reasons are not the point; it must not be title-contract
+    await expect(board.updateItem(taskId, { title: 'L'.repeat(300) })).rejects.toMatchObject({ code: 'title-contract' })
+    await expect(board.updateItem(sprintId, { goal: 'G'.repeat(200) })).rejects.toMatchObject({ code: 'title-contract' })
+    await board.endSprint()
+    await board.archiveItem(taskId)
+    // The annotation never reached the medium.
+    await life.dispose?.()
+    const medium = join(lifeRoot, `${GLOBAL_BOARD_NAME}.json`)
+    const written = JSON.parse(readFileSync(medium, 'utf8')) as { tables: { tasks: Record<string, Record<string, unknown>>; sprints: Record<string, Record<string, unknown>> } }
+    expect(written.tables.tasks[taskId]).not.toHaveProperty('titleOverflow')
+    expect(written.tables.sprints[sprintId]).not.toHaveProperty('goalOverflow')
+    life = await openJsonStack(lifeRoot)
+  })
+
+  it('rewriting a legacy title to one that fits clears the annotation', async () => {
+    const { taskId, sprintId } = await plantLegacy()
+    const board = await life.scrum.board()
+    await board.updateItem(taskId, { title: 'now it fits' })
+    await board.updateItem(sprintId, { goal: 'and so does the goal' })
+    expect(board.tree().releases[0]!.features[0]!.components[0]!.tasks[0]!.titleOverflow).toBeUndefined()
+    expect(board.sprints()[0]!.goalOverflow).toBeUndefined()
+    expect(board.overflowSummary()).toEqual({ titles: 0, goals: 0, limits: { title: 80, goal: 120 } })
+  })
+})

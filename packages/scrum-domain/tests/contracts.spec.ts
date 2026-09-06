@@ -7,7 +7,7 @@
  */
 import { createHash } from 'node:crypto'
 import { describe, expect, it } from 'vitest'
-import { ArtifactContract, RequirementsContract, ReviewContract } from '../src/contracts.ts'
+import { ArtifactContract, GOAL_MAX, RequirementsContract, ReviewContract, TITLE_MAX, TitleContract } from '../src/contracts.ts'
 import type { Component } from '../src/spec.ts'
 
 /** A minimal live component carrying the given artifacts. */
@@ -622,5 +622,69 @@ describe('gitignoreNames / traceGateFor / TRACE_PROBE_CAP (comp-49 R6, R8)', () 
     expect(traceGateFor(asBuilt, 'validation')).toBe('done')
     expect(traceGateFor(comp({ requirements: TWO_REQ, design: FULL, phase: 'validation' }), 'validation')).toBeNull()
     expect(traceGateFor(comp({ phase: 'design' }), 'validation')).toBeNull()
+  })
+})
+
+// ── comp-53: TitleContract — a title is a title ────────────────────────────
+
+describe('TitleContract (comp-53 R1, D7)', () => {
+  it('limits(): 80 for titles, 120 for sprint goals — the constants Controllers and the View never read directly (D9)', () => {
+    expect(TITLE_MAX).toBe(80)
+    expect(GOAL_MAX).toBe(120)
+    expect(TitleContract.limits()).toEqual({ title: 80, goal: 120 })
+  })
+
+  it('length() counts code points: an astral emoji is 1, a ZWJ family is 5, a flag is 2', () => {
+    expect(TitleContract.length('a')).toBe(1)
+    expect(TitleContract.length('😀')).toBe(1)
+    expect(TitleContract.length('👨‍👩‍👧')).toBe(5)
+    expect(TitleContract.length('🇧🇷')).toBe(2)
+  })
+
+  it('80 code points pass, 81 are refused with the literal reason (title)', () => {
+    expect(TitleContract.check('title', 'x'.repeat(80))).toEqual({ ok: true })
+    expect(TitleContract.check('title', 'x'.repeat(81))).toEqual({
+      ok: false, reasons: ['title too long: 81 > 80 chars — move the detail to description'],
+    })
+    // 80 astral emoji are 160 UTF-16 units and still 80 code points.
+    expect(TitleContract.check('title', '😀'.repeat(80))).toEqual({ ok: true })
+  })
+
+  it('120 code points pass, 121 are refused with the literal reason (goal)', () => {
+    expect(TitleContract.check('goal', 'g'.repeat(120))).toEqual({ ok: true })
+    expect(TitleContract.check('goal', 'g'.repeat(121))).toEqual({
+      ok: false, reasons: ['sprint goal too long: 121 > 120 chars — move the detail to the planning ceremony'],
+    })
+  })
+
+  it('a line break or control character is refused: \\n, \\r, \\t, U+007F, U+0085 (C1), U+2028 — with the literal reason', () => {
+    for (const bad of ['a\nb', 'a\rb', 'a\tb', 'a\u007Fb', 'a\u0085b', 'a\u2028b', 'a\u2029b', 'a\u0000b']) {
+      expect(TitleContract.check('title', bad)).toEqual({
+        ok: false, reasons: ['title contains a line break or control character — titles are one line'],
+      })
+    }
+    expect(TitleContract.check('goal', 'a\nb')).toEqual({
+      ok: false, reasons: ['sprint goal contains a line break or control character — a sprint goal is one line'],
+    })
+    // Ordinary spaces and non-ASCII letters are fine.
+    expect(TitleContract.check('title', 'título com acentuação e espaços')).toEqual({ ok: true })
+  })
+
+  it('both violations come back together, control first, then length', () => {
+    const text = `${'x'.repeat(40)}\n${'x'.repeat(40)}`
+    expect(TitleContract.check('title', text)).toEqual({
+      ok: false,
+      reasons: [
+        'title contains a line break or control character — titles are one line',
+        'title too long: 81 > 80 chars — move the detail to description',
+      ],
+    })
+  })
+
+  it('overflow(): { length, limit } only when the text is over the limit, undefined otherwise', () => {
+    expect(TitleContract.overflow('title', 'x'.repeat(80))).toBeUndefined()
+    expect(TitleContract.overflow('title', 'x'.repeat(300))).toEqual({ length: 300, limit: 80 })
+    expect(TitleContract.overflow('goal', 'g'.repeat(200))).toEqual({ length: 200, limit: 120 })
+    expect(TitleContract.overflow('goal', 'g'.repeat(120))).toBeUndefined()
   })
 })

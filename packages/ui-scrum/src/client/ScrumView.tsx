@@ -184,6 +184,7 @@ export function ScrumView(props: ScrumViewProps) {
             onClose={() => { props.actions.setSelected(null) }}
             engine={props.engine}
             theme={theme}
+            limits={data?.limits}
           />
         )}
       </div>

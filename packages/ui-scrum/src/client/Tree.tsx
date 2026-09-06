@@ -11,13 +11,15 @@
 import { useState } from 'react'
 import type { ReactNode } from 'react'
 import type { ScrumState, WireComponent, WireFeature, WireRelease, WireSprint, WireTask } from './api.ts'
-import { aggOf, KindChip, PhaseChip, Rollup, StateDot, TypeIcon } from './meta.tsx'
+import { aggOf, Counter, KindChip, OverflowChip, PhaseChip, Rollup, StateDot, TypeIcon } from './meta.tsx'
+import type { RunOutcome } from './settle.ts'
+import type { WireOverflow } from './api.ts'
 import type { KIND_META } from './meta.tsx'
 
 /** Callbacks the tree drives (mutations funnel through the panel). */
 export interface TreeCallbacks {
-  /** Run one wire action (panel wraps busy/error and refreshes the store). */
-  run: (action: Record<string, unknown>) => void
+  /** Run one wire action (panel wraps busy/error and refreshes the store); the outcome lets inline creation keep its draft on a refusal (comp-53 D1). */
+  run: (action: Record<string, unknown>) => Promise<RunOutcome>
   /** Navigate to the Sprints section (sprint chips). */
   goToSprints: () => void
 }
@@ -76,20 +78,27 @@ function QuickAdd(props: {
   label: string
   /** Optional second input (estimate, target date). */
   extraPlaceholder?: string
-  onCreate: (title: string, extra: string) => void
+  /** The title ceiling for the counter (comp-53 R6d); absent → no counter. */
+  limit?: number
+  onCreate: (title: string, extra: string) => Promise<RunOutcome>
 }) {
   const [active, setActive] = useState(false)
   const [title, setTitle] = useState('')
   const [extra, setExtra] = useState('')
-  const submit = () => {
+  const [error, setError] = useState<string | null>(null)
+  // comp-53 D1: the draft is cleared only on `ok` — a refusal (the title
+  // contract, say) keeps the text in the input and shows the literal reason.
+  const submit = async () => {
     if (title.trim().length === 0) return
-    props.onCreate(title.trim(), extra.trim())
+    const outcome = await props.onCreate(title.trim(), extra.trim())
+    if (!outcome.ok) { setError(outcome.message); return }
+    setError(null)
     setTitle('')
     setExtra('')
   }
-  const cancel = () => { setActive(false); setTitle(''); setExtra('') }
+  const cancel = () => { setActive(false); setTitle(''); setExtra(''); setError(null) }
   const keys = (e: React.KeyboardEvent) => {
-    if (e.key === 'Enter') submit()
+    if (e.key === 'Enter') void submit()
     if (e.key === 'Escape') cancel()
   }
   return (
@@ -99,12 +108,14 @@ function QuickAdd(props: {
         {active
           ? (
             <>
-              <input className="scrum-bl-add-input" autoFocus placeholder={props.label} value={title} onChange={(e) => { setTitle(e.target.value) }} onKeyDown={keys} />
+              <input className="scrum-bl-add-input" autoFocus placeholder={props.label} value={title} onChange={(e) => { setTitle(e.target.value); setError(null) }} onKeyDown={keys} />
+              <Counter text={title} limit={props.limit} />
               {props.extraPlaceholder !== undefined && (
                 <input className="scrum-bl-add-extra" placeholder={props.extraPlaceholder} value={extra} onChange={(e) => { setExtra(e.target.value) }} onKeyDown={keys} />
               )}
-              <button className="scrum-btn primary" onClick={submit}>Criar</button>
+              <button className="scrum-btn primary" onClick={() => { void submit() }}>Criar</button>
               <button className="scrum-btn" title="Fechar (Esc)" onClick={cancel}>✕</button>
+              {error !== null && <span className="scrum-inline-error" title={error}>{error}</span>}
             </>
           )
           : <button className="scrum-bl-add-btn" onClick={() => { setActive(true) }}>＋ {props.label}</button>}
@@ -132,6 +143,8 @@ function Row(props: {
   sprint?: ReactNode
   /** Chip rendered before the title (the task kind, comp-45). */
   chip?: ReactNode
+  /** Legacy title over the limit (comp-53 R6b): the chip after the id. */
+  overflow?: WireOverflow
 }) {
   return (
     <div className={`scrum-bl-row lvl-${props.kind}${props.selected ? ' is-selected' : ''}`}>
@@ -149,6 +162,7 @@ function Row(props: {
         {props.chip}
         <button className="scrum-bl-title" title="Abrir detalhes" onClick={props.onOpen}>{props.title}</button>
         <span className="scrum-id">{props.id}</span>
+        <OverflowChip over={props.overflow} />
         <span className="scrum-bl-hover"><RowMenu items={props.menu} /></span>
       </div>
       <div className="scrum-bl-cell">{props.state ?? <span className="scrum-dash">—</span>}</div>
@@ -275,6 +289,7 @@ export function Tree(props: { state: ScrumState; callbacks: TreeCallbacks; ui: T
         depth={3}
         id={task.id}
         title={task.title}
+        overflow={task.titleOverflow}
         chevron={null}
         selected={ui.selected === task.id}
         onOpen={() => { ui.select(task.id) }}
@@ -295,6 +310,7 @@ export function Tree(props: { state: ScrumState; callbacks: TreeCallbacks; ui: T
         depth={2}
         id={component.id}
         title={component.title}
+        overflow={component.titleOverflow}
         chevron={chevron(component.id)}
         selected={ui.selected === component.id}
         onOpen={() => { ui.select(component.id) }}
@@ -312,9 +328,10 @@ export function Tree(props: { state: ScrumState; callbacks: TreeCallbacks; ui: T
         depth={3}
         label="Nova tarefa"
         extraPlaceholder="pts"
+        limit={props.state.limits?.title}
         onCreate={(title, extra) => {
           const estimate = Number(extra)
-          run({
+          return run({
             action: 'createTask',
             componentId: component.id,
             title,
@@ -333,6 +350,7 @@ export function Tree(props: { state: ScrumState; callbacks: TreeCallbacks; ui: T
         depth={1}
         id={feature.id}
         title={feature.title}
+        overflow={feature.titleOverflow}
         chevron={chevron(feature.id)}
         selected={ui.selected === feature.id}
         onOpen={() => { ui.select(feature.id) }}
@@ -348,7 +366,8 @@ export function Tree(props: { state: ScrumState; callbacks: TreeCallbacks; ui: T
         key={`add-${feature.id}`}
         depth={2}
         label="Novo componente"
-        onCreate={(title) => { run({ action: 'createComponent', featureId: feature.id, title }) }}
+        limit={props.state.limits?.title}
+        onCreate={(title) => run({ action: 'createComponent', featureId: feature.id, title })}
       />,
     )
   }
@@ -361,6 +380,7 @@ export function Tree(props: { state: ScrumState; callbacks: TreeCallbacks; ui: T
         depth={0}
         id={release.id}
         title={release.name}
+        overflow={release.titleOverflow}
         chevron={chevron(release.id)}
         selected={ui.selected === release.id}
         onOpen={() => { ui.select(release.id) }}
@@ -377,7 +397,8 @@ export function Tree(props: { state: ScrumState; callbacks: TreeCallbacks; ui: T
         key={`add-${release.id}`}
         depth={1}
         label="Nova função"
-        onCreate={(title) => { run({ action: 'createFeature', releaseId: release.id, title }) }}
+        limit={props.state.limits?.title}
+        onCreate={(title) => run({ action: 'createFeature', releaseId: release.id, title })}
       />,
     )
   }
@@ -387,9 +408,8 @@ export function Tree(props: { state: ScrumState; callbacks: TreeCallbacks; ui: T
       depth={0}
       label="Nova release"
       extraPlaceholder="Data alvo (AAAA-MM-DD)"
-      onCreate={(name, extra) => {
-        run({ action: 'createRelease', name, ...extra.length > 0 ? { targetDate: extra } : {} })
-      }}
+      limit={props.state.limits?.title}
+      onCreate={(name, extra) => run({ action: 'createRelease', name, ...extra.length > 0 ? { targetDate: extra } : {} })}
     />,
   )
 

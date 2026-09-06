@@ -43,7 +43,9 @@ const DISCIPLINE =
 
 /** Cut one text to `max` chars, ellipsis included (token economy). */
 function cut(text: string, max: number): string {
-  return text.length <= max ? text : `${text.slice(0, max - 1)}…`
+  // Code points, not UTF-16 units (comp-53 D4): the same measure the title contract uses.
+  const points = [...text]
+  return points.length <= max ? text : `${points.slice(0, max - 1).join('')}…`
 }
 
 /** Render one task entry: `task-7 [test] "Título" (3pt)` (the kind prefix is the View's, comp-45 R4). */

@@ -13,7 +13,7 @@ import {
   formatSprints,
   formatSprintStatus,
   formatTree,
-  withBudgetHeader,
+  withBoardHeader,
   ScrumError,
 } from '@scrum-harness/domain'
 
@@ -56,8 +56,8 @@ export function apply(ctx: Context): void {
           case '':
           case 'tree': {
             const sprints = board.sprints()
-            // comp-50 R3: the board's own suite budget heads the tree views (never on the default).
-            const tree = withBudgetHeader(board.suiteBudget(), formatTree(board.tree(), sprints))
+            // comp-50 R3 / comp-53 R5: the board's own suite budget and title-overflow count head the tree views.
+            const tree = withBoardHeader(board.suiteBudget(), board.overflowSummary(), formatTree(board.tree(), sprints))
             if ((verb ?? '') === 'tree') return { kind: 'success', text: tree }
             return { kind: 'success', text: `${tree}\n\nSprints:\n${formatSprints(sprints, board.releaseNames())}` }
           }

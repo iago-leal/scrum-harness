@@ -6,8 +6,8 @@
  * @module @scrum-harness/ui/client/meta
  */
 
-import type { WirePhase } from './api.ts'
-import { PHASE_TITLES, phaseLabel } from './form.ts'
+import type { WireOverflow, WirePhase } from './api.ts'
+import { PHASE_TITLES, phaseLabel, titleCounter } from './form.ts'
 
 /** One work-item kind's visual identity. */
 export interface KindMeta {
@@ -125,4 +125,26 @@ export function Rollup(props: { agg: Agg }) {
       <span className="scrum-rollup-txt">{agg.pts > 0 ? `${agg.ptsDone}/${agg.pts} pt` : `${agg.done}/${agg.tasks}`}</span>
     </span>
   )
+}
+
+/**
+ * The legacy-overflow chip (comp-53 R6b/c): only on an item whose stored
+ * title/goal is over the limit — the Model marks it, the View shows it.
+ */
+export function OverflowChip(props: { over: WireOverflow | undefined; noun?: 'título longo' | 'meta longa' }) {
+  if (props.over === undefined) return null
+  const noun = props.noun ?? 'título longo'
+  const advice = noun === 'meta longa' ? 'reescreva a meta e leve o detalhe à cerimônia de planning' : 'reescreva o título e leve o detalhe à descrição'
+  return <span className="scrum-chip st-overflow" title={`${props.over.length}/${props.over.limit} — ${advice}`}>{noun}</span>
+}
+
+/**
+ * The `N/limit` counter beside a title/goal input (comp-53 R6a): muted,
+ * attention from 80%, danger past the limit. Renders nothing without a
+ * limit (pre-v0.21 server). Never disables anything — the gate is the domain's.
+ */
+export function Counter(props: { text: string; limit: number | undefined }) {
+  if (props.limit === undefined) return null
+  const { length, tone } = titleCounter(props.text, props.limit)
+  return <span className={`scrum-counter is-${tone}`} title="Tamanho do título (o domínio recusa acima do limite)">{length}/{props.limit}</span>
 }
