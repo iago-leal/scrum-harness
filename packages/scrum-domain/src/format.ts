@@ -420,6 +420,8 @@ export function specsHeader(data: SpecSetData): string | null {
   if (s.invalid > 0) parts.push(`${s.invalid} invalid`)
   if (s.unknown > 0) parts.push(`${s.unknown} unknown`)
   if (s.complete) parts.push('complete')
+  // comp-60 R3: reviews ride the header only when there is at least one current.
+  if ((s.reviewed ?? 0) > 0) parts.push(`${s.reviewed} reviewed`)
   return parts.join(' · ')
 }
 
@@ -438,20 +440,37 @@ export function formatSpecsProbeMessage(reason: 'no-workspace' | 'absent' | 'not
   }
 }
 
+/**
+ * The review suffix of one status line (comp-60 R3): the review's state and
+ * reasons whenever a review file exists; ` · no review` only on draft/approved
+ * lines (a missing or invalid spec's line already says what it lacks). The
+ * "nothing to cover" reasons drop the file name the line already carries.
+ */
+function reviewSuffix(entry: SpecEntry): string {
+  const review = entry.review
+  if (review === undefined) return entry.state === 'draft' || entry.state === 'approved' ? ' · no review' : ''
+  if (review.state === 'current') return ' · review current'
+  const reasons = review.reasons.map(r => r.replace(`${entry.file} is missing (nothing to cover)`, 'nothing to cover').replace(`${entry.file} is invalid (fix the contract first)`, 'fix the contract first'))
+  return ` · review ${review.state}: ${reasons.join('; ')}`
+}
+
 /** One id-first line of the status view. */
 function specLine(entry: SpecEntry): string {
   if (entry.state === 'unknown') {
-    return `${entry.file} [unknown] — not in the catalog${entry.caseOf !== undefined ? ` (case: ${entry.caseOf}?)` : ''}`
+    const note = entry.hint !== undefined ? ` (${entry.hint})` : entry.caseOf !== undefined ? ` (case: ${entry.caseOf}?)` : ''
+    return `${entry.file} [unknown] — not in the catalog${note}`
   }
   const who = `${entry.owner ?? ''}${entry.minimal ? ' · minimal' : ''}`
-  if (entry.state === 'missing') return `${entry.file} [missing] ${who}`
-  if (entry.state === 'invalid') return `${entry.file} [invalid] ${who} — ${entry.reasons.join('; ')}`
+  if (entry.state === 'missing') return `${entry.file} [missing] ${who}${reviewSuffix(entry)}`
+  if (entry.state === 'invalid') return `${entry.file} [invalid] ${who} — ${entry.reasons.join('; ')}${reviewSuffix(entry)}`
   const ids = entry.ids.length === 0
     ? 'no ids'
-    : entry.ids.length <= 6
-      ? `${entry.ids.length} ids (${entry.ids.join(', ')})`
-      : `${entry.ids.length} ids (${entry.ids[0]} … ${entry.ids[entry.ids.length - 1]})`
-  return `${entry.file} [${entry.state} v${entry.version} · ${entry.digest}] ${who} — ${ids}`
+    : entry.ids.length === 1
+      ? `1 id (${entry.ids[0]})`
+      : entry.ids.length <= 6
+        ? `${entry.ids.length} ids (${entry.ids.join(', ')})`
+        : `${entry.ids.length} ids (${entry.ids[0]} … ${entry.ids[entry.ids.length - 1]})`
+  return `${entry.file} [${entry.state} v${entry.version} · ${entry.digest}] ${who} — ${ids}${reviewSuffix(entry)}`
 }
 
 /**
@@ -472,5 +491,9 @@ export function formatSpecStatus(data: SpecSetData): string {
     lines.push(specLine(entry))
   }
   if (unknownHidden > 0) lines.push(`  +${unknownHidden} unknown file(s) not shown`)
+  const unknownReviews = data.unknownReviews ?? []
+  if (unknownReviews.length > 0) {
+    lines.push(`Unknown reviews: ${unknownReviews.map(r => `${r.file}${r.caseOf !== undefined ? ` (did you mean ${r.caseOf}?)` : ''}`).join(', ')}`)
+  }
   return lines.join('\n')
 }

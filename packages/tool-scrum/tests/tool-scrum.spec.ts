@@ -774,9 +774,9 @@ describe('scrum_spec_status and the Specs header (comp-59 R6, R7)', () => {
     const text = (await run('scrum_spec_status', {}, { cwd: ws })).text
     const lines = text.split('\n')
     expect(lines[0]).toBe('Specs: 1/3 minimal approved · 3 present · 1 invalid · 1 unknown')
-    expect(lines[1]).toMatch(/^PRD\.md \[approved v1 · [0-9a-f]{8}\] product · minimal — no ids$/)
+    expect(lines[1]).toMatch(/^PRD\.md \[approved v1 · [0-9a-f]{8}\] product · minimal — no ids · no review$/)
     expect(lines[2]).toBe('GLOSSARY.md [missing] domain')
-    expect(lines[3]).toMatch(/^RULES\.md \[draft v1 · [0-9a-f]{8}\] domain · minimal — 2 ids \(R1, R2\)$/)
+    expect(lines[3]).toMatch(/^RULES\.md \[draft v1 · [0-9a-f]{8}\] domain · minimal — 2 ids \(R1, R2\) · no review$/)
     expect(lines[7]).toBe('API_SPEC.md [invalid] api-data · minimal — purpose missing; version missing; status missing; owner missing')
     expect(lines[16]).toBe('notes.md [unknown] — not in the catalog')
     expect(lines).toHaveLength(17)
@@ -795,5 +795,61 @@ describe('scrum_spec_status and the Specs header (comp-59 R6, R7)', () => {
     expect((await run('scrum_tree', {}, { cwd: ws })).text.split('\n')[0]).toBe('Specs: 1/3 minimal approved · 1 present')
     // The global board never probes a disk.
     expect((await run('scrum_tree', {}, { cwd: null })).text).not.toMatch(/^Specs:/m)
+  })
+})
+
+// ── comp-60: scrum_spec_brief / scrum_spec_review_brief (R8) — written before the code ──
+describe('scrum_spec_brief and scrum_spec_review_brief (comp-60 R8)', () => {
+  let ws: string
+  beforeEach(() => { ws = mkdtempSync(join(tmpdir(), 'scrum-spec-brief-')) })
+  afterEach(() => { rmSync(ws, { recursive: true, force: true }) })
+
+  const spec = (file: string, owner: string, status = 'draft', body = 'Body.', version = 1): string =>
+    `---\ntitle: "${file}"\npurpose: "p"\nversion: ${version}\nstatus: ${status}\nowner: ${owner}\n---\n${body}`
+
+  it('both are read tools whose file parameter is the enum of the fifteen catalog names', () => {
+    for (const name of ['scrum_spec_brief', 'scrum_spec_review_brief']) {
+      const schema = ctx.tools.schemas().find(s => s.name === name)!
+      expect(schema, name).toBeDefined()
+      const props = (schema.parameters as { properties: Record<string, { enum?: string[] }>; required?: string[] })
+      expect(props.properties.file?.enum).toEqual([
+        'PRD.md', 'GLOSSARY.md', 'RULES.md', 'ARCHITECTURE.md', 'TECH_STACK.md', 'SECURITY.md', 'API_SPEC.md', 'DATABASE_SCHEMA.md',
+        'UI_UX_SPEC.md', 'TESTS_SPEC.md', 'AGENTS.md', 'WORKFLOW.md', 'PROMPTS.md', 'TASKS.md', 'README.md',
+      ])
+      expect(props.required).toEqual(['file'])
+    }
+    expect(ctx.tools.schemas().find(s => s.name === 'scrum_spec_status')!.description).toMatch(/review/)
+  })
+
+  it('brief of the PRD with no specs/ at all; the order gate refuses RULES naming the PRD; no workspace', async () => {
+    expect((await run('scrum_spec_brief', { file: 'PRD.md' }, { cwd: null })).text).toBe('Specs: no workspace — the spec set lives in <workspace>/specs/')
+    const prd = (await run('scrum_spec_brief', { file: 'PRD.md' }, { cwd: ws })).text
+    expect(prd.split('\n')[0]).toBe('# Spec brief — PRD.md (Product Agent)')
+    expect(prd).toContain('## This file does not exist yet')
+    expect(prd).toContain('version: 1\nstatus: draft\nowner: product')
+    const refused = await run('scrum_spec_brief', { file: 'RULES.md' }, { cwd: ws })
+    expect(refused.isError).toBe(true)
+    expect(refused.text).toContain('RULES.md: PRD.md is missing (needs approved) — write and approve the predecessors first')
+  })
+
+  it('with an approved and reviewed PRD the RULES brief opens and carries the PRD; the review brief refuses a missing file and briefs a present one', async () => {
+    mkdirSync(join(ws, 'specs', 'reviews'), { recursive: true })
+    const prdText = spec('PRD.md', 'product', 'approved', 'Vision.', 2)
+    writeFileSync(join(ws, 'specs', 'PRD.md'), prdText)
+    const status = (await run('scrum_spec_status', {}, { cwd: ws })).text
+    const digest = /PRD\.md \[approved v2 · ([0-9a-f]{8})\]/.exec(status)![1]!
+    writeFileSync(join(ws, 'specs', 'reviews', 'PRD.review.md'), `---\nfile: PRD.md\nreviewer: r\nreviewed_version: 2\nreviewed_digest: "${digest}"\nverdict: approved\nround: 1\nfindings: { high: 0, medium: 0, low: 0 }\n---\nok`)
+    expect((await run('scrum_spec_status', {}, { cwd: ws })).text.split('\n')[0]).toBe('Specs: 1/3 minimal approved · 1 present · 1 reviewed')
+    const rules = (await run('scrum_spec_brief', { file: 'RULES.md' }, { cwd: ws })).text
+    expect(rules).toContain(`### specs/PRD.md (version 2, digest ${digest})`)
+    expect(rules).toContain('Vision.')
+    const missing = await run('scrum_spec_review_brief', { file: 'RULES.md' }, { cwd: ws })
+    expect(missing.isError).toBe(true)
+    expect(missing.text).toContain('RULES.md: write it first — scrum_spec_brief')
+    writeFileSync(join(ws, 'specs', 'RULES.md'), spec('RULES.md', 'domain', 'draft', 'R1 — a'))
+    const review = (await run('scrum_spec_review_brief', { file: 'RULES.md' }, { cwd: ws })).text
+    expect(review.split('\n')[0]).toMatch(/^# Adversarial review brief — specs\/RULES\.md \(version 1, digest [0-9a-f]{8}\) — status: draft$/)
+    expect(review).toContain('round: 1')
+    expect(review).toContain('save the report as `specs/reviews/RULES.review.md`')
   })
 })

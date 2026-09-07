@@ -14,7 +14,8 @@
  */
 
 import { z } from 'zod'
-import { ArtifactContract, describeIssue } from './contracts.ts'
+import { ArtifactContract, describeIssue, reviewMetaSchema } from './contracts.ts'
+import type { ReviewMeta } from './contracts.ts'
 import { ScrumError } from './error.ts'
 import { parseFrontmatter } from './frontmatter.ts'
 import { deepFreeze } from './traces.ts'
@@ -92,6 +93,67 @@ export class SpecCatalog {
   static minimal(): SpecCatalogEntry[] {
     return CATALOG.filter(e => e.minimal)
   }
+
+  /**
+   * The direct predecessors of one file in the chain of the agents (comp-60 R1).
+   * @param file - a catalog file name.
+   * @throws {ScrumError} `invalid-input` outside the catalog.
+   */
+  static predecessors(file: string): readonly string[] {
+    const list = SPEC_PREDECESSORS[file]
+    if (list === undefined) throw new ScrumError('invalid-input', `'${file}' is not a catalog spec file`)
+    return list
+  }
+
+  /**
+   * The files that name `file` as a direct predecessor, in catalog order (comp-60 R5/R7).
+   * @param file - a catalog file name.
+   * @throws {ScrumError} `invalid-input` outside the catalog.
+   */
+  static dependents(file: string): string[] {
+    SpecCatalog.predecessors(file)
+    return CATALOG.filter(e => SPEC_PREDECESSORS[e.file]!.includes(file)).map(e => e.file)
+  }
+}
+
+// ── The chain of the agents (comp-60 R1) ──
+
+/**
+ * Direct predecessors of each spec file, derived from Table 6.4 and the
+ * content dependencies: the PRD first; the domain files, the backlog and the
+ * entry point after the PRD; the architect's files after the RULES; the
+ * API/data files and the agent files after the ARCHITECTURE; the test
+ * strategy after the RULES and the API. Only direct edges — transitivity is
+ * each predecessor having passed its own gate when it was written.
+ */
+export const SPEC_PREDECESSORS: Readonly<Record<string, readonly string[]>> = deepFreeze({
+  'PRD.md': [],
+  'GLOSSARY.md': ['PRD.md'],
+  'RULES.md': ['PRD.md'],
+  'ARCHITECTURE.md': ['RULES.md'],
+  'TECH_STACK.md': ['RULES.md'],
+  'SECURITY.md': ['RULES.md'],
+  'API_SPEC.md': ['ARCHITECTURE.md'],
+  'DATABASE_SCHEMA.md': ['ARCHITECTURE.md'],
+  'UI_UX_SPEC.md': ['ARCHITECTURE.md'],
+  'TESTS_SPEC.md': ['RULES.md', 'API_SPEC.md'],
+  'AGENTS.md': ['ARCHITECTURE.md'],
+  'WORKFLOW.md': ['ARCHITECTURE.md'],
+  'PROMPTS.md': ['ARCHITECTURE.md'],
+  'TASKS.md': ['PRD.md'],
+  'README.md': ['PRD.md'],
+})
+
+/** The review file of a spec: `PRD.md` → `PRD.review.md` (lives in `specs/reviews/`). */
+export function reviewFileOf(file: string): string {
+  return `${file.replace(/\.md$/, '')}.review.md`
+}
+
+/** The catalog spec a review file name covers, or undefined when the stem is not a catalog file. */
+export function specOfReview(name: string): string | undefined {
+  if (!name.endsWith('.review.md')) return undefined
+  const spec = `${name.slice(0, -'.review.md'.length)}.md`
+  return SpecCatalog.entry(spec) === undefined ? undefined : spec
 }
 
 // ── Probe data (R4; structurally identical to `@scrum-harness/probe`, D5) ──
@@ -110,7 +172,8 @@ export interface SpecFile {
 export type SpecsProbe =
   | { kind: 'absent' }
   | { kind: 'not-a-directory' }
-  | { kind: 'dir'; files: SpecFile[] }
+  /** `reviews` is present only when `specs/reviews` is a readable directory (comp-60 R2). */
+  | { kind: 'dir'; files: SpecFile[]; reviews?: SpecFile[] }
 
 // ── Contract (R2, R3) ──
 
@@ -299,6 +362,10 @@ export interface SpecEntry {
   reasons: string[]
   /** On an unknown file: the catalog name it matches ignoring case. */
   caseOf?: string
+  /** On an unknown file named like a review: where reviews go (comp-60 R3). */
+  hint?: string
+  /** The review of this spec (comp-60 R2/R3); absent when there is no review file. */
+  review?: SpecReview
 }
 
 export interface SpecSummary {
@@ -310,6 +377,8 @@ export interface SpecSummary {
   unknown: number
   /** Every minimal file approved and no catalog file invalid. */
   complete: boolean
+  /** Present catalog files whose review is `current` (comp-60 R3). */
+  reviewed: number
 }
 
 /** The set as plain, deep-frozen data: what the tools, the `/scrum` command and the API read. */
@@ -317,6 +386,8 @@ export interface SpecSetData {
   exists: boolean
   reason?: 'absent' | 'not-a-directory'
   entries: SpecEntry[]
+  /** Files of `specs/reviews/` whose stem is not a catalog file (comp-60 R3). */
+  unknownReviews: { file: string; caseOf?: string }[]
   summary: SpecSummary
 }
 
@@ -335,7 +406,8 @@ export class SpecSet {
         exists: false,
         reason: probe.kind,
         entries: SpecCatalog.entries.map(e => missingEntry(e)),
-        summary: { minimal: { approved: 0, total: MINIMAL_TOTAL }, present: 0, invalid: 0, unknown: 0, complete: false },
+        unknownReviews: [],
+        summary: { minimal: { approved: 0, total: MINIMAL_TOTAL }, present: 0, invalid: 0, unknown: 0, complete: false, reviewed: 0 },
       })
     }
     const byName = new Map<string, SpecFile>()
@@ -343,40 +415,64 @@ export class SpecSet {
       if (byName.has(file.name)) throw new ScrumError('invalid-input', `specs/ lists '${file.name}' twice`)
       byName.set(file.name, file)
     }
+    const byReview = new Map<string, SpecFile>()
+    for (const review of probe.reviews ?? []) {
+      if (byReview.has(review.name)) throw new ScrumError('invalid-input', `specs/reviews/ lists '${review.name}' twice`)
+      byReview.set(review.name, review)
+    }
     const contract = new SpecContract()
+    const reviews = new SpecReviewContract()
     const entries: SpecEntry[] = []
     let approvedMinimal = 0
     let present = 0
     let invalid = 0
+    let reviewed = 0
+    /** Attach the review of one catalog entry (comp-60 R3): omitted when there is no review file. */
+    const withReview = (entry: SpecEntry): SpecEntry => {
+      const review = reviews.check(entry.file, byReview.get(reviewFileOf(entry.file)), entry)
+      if (review.state === 'none') return entry
+      if (review.state === 'current') reviewed += 1
+      return { ...entry, review }
+    }
     for (const entry of SpecCatalog.entries) {
       const file = byName.get(entry.file)
-      if (file === undefined) { entries.push(missingEntry(entry)); continue }
+      if (file === undefined) { entries.push(withReview(missingEntry(entry))); continue }
       present += 1
       const check = contract.check(entry.file, file)
       const state: SpecState = check.reasons.length > 0 ? 'invalid' : check.status!
       if (state === 'invalid') invalid += 1
       if (state === 'approved' && entry.minimal) approvedMinimal += 1
-      entries.push({
+      entries.push(withReview({
         file: entry.file, owner: entry.owner, minimal: entry.minimal, state,
         ...check.version !== undefined ? { version: check.version } : {},
         ...check.status !== undefined ? { status: check.status } : {},
         ...check.digest !== undefined ? { digest: check.digest } : {},
         ids: check.ids, reasons: check.reasons,
-      })
+      }))
     }
     const unknown = [...byName.keys()].filter(name => SpecCatalog.entry(name) === undefined).sort(codePoint)
     for (const name of unknown) {
       const caseOf = SpecCatalog.caseOf(name)
-      entries.push({ file: name, minimal: false, state: 'unknown', ids: [], reasons: [], ...caseOf !== undefined ? { caseOf } : {} })
+      entries.push({
+        file: name, minimal: false, state: 'unknown', ids: [], reasons: [],
+        ...caseOf !== undefined ? { caseOf } : {},
+        ...name.endsWith('.review.md') ? { hint: 'reviews go in specs/reviews/' } : {},
+      })
     }
+    const unknownReviews = [...byReview.keys()].filter(name => specOfReview(name) === undefined).sort(codePoint).map((name) => {
+      const stem = name.endsWith('.review.md') ? name.slice(0, -'.review.md'.length) : name
+      const caseOf = SpecCatalog.caseOf(`${stem}.md`)
+      return { file: name, ...caseOf !== undefined ? { caseOf: reviewFileOf(caseOf) } : {} }
+    })
     const summary: SpecSummary = {
       minimal: { approved: approvedMinimal, total: MINIMAL_TOTAL },
       present,
       invalid,
       unknown: unknown.length,
       complete: approvedMinimal === MINIMAL_TOTAL && invalid === 0,
+      reviewed,
     }
-    return deepFreeze({ exists: true, entries, summary })
+    return deepFreeze({ exists: true, entries, unknownReviews, summary })
   }
 }
 
@@ -386,4 +482,235 @@ function missingEntry(entry: SpecCatalogEntry): SpecEntry {
 
 function codePoint(a: string, b: string): number {
   return a < b ? -1 : a > b ? 1 : 0
+}
+
+// ── Reviews on disk (comp-60 R2) ──
+
+/** The review of one spec as the contract read it — every field that parsed travels, whatever the state. */
+export interface SpecReview {
+  state: 'none' | 'invalid' | 'stale' | 'needs-revision' | 'current'
+  reasons: string[]
+  version?: number
+  digest?: string
+  verdict?: 'approved' | 'needs-revision'
+  round?: number
+  high?: number
+  /** The review body (trimmed), when the frontmatter parsed. */
+  body?: string
+}
+
+/** What the review contract needs to know about the spec it covers. */
+export interface SpecCoverage {
+  state: SpecState
+  version?: number
+  digest?: string
+}
+
+const REVIEW_KEYS = ['reviewer', 'reviewed_version', 'reviewed_digest', 'verdict', 'round', 'findings'] as const
+type ReviewKey = (typeof REVIEW_KEYS)[number]
+
+/** Map one zod issue of the review frontmatter to the contract's wording (comp-60 R2 d). */
+function reviewIssue(key: ReviewKey, issue: z.core.$ZodIssue): string {
+  const message = issue.message
+  if (issue.code === 'invalid_type' && (message.includes('received undefined') || message.includes('received null'))) return `${key} missing`
+  if (key === 'reviewed_digest' && issue.code === 'invalid_type' && message.includes('received number')) {
+    return 'reviewed_digest must be a quoted string (write reviewed_digest: "…" — bare digits are parsed as a number)'
+  }
+  if (key === 'verdict' && (issue.code === 'invalid_value' || (issue as { received?: unknown }).received !== undefined)) return 'verdict must be one of approved, needs-revision'
+  if (key === 'reviewed_version' || key === 'round') return `${key} must be an integer ≥ 1`
+  const path = issue.path.map(String).join('.')
+  return `${path.length > 0 && path !== key ? path : key} ${describeIssue(issue)}`
+}
+
+/**
+ * The contract over one spec review file (comp-60 R2): a sibling by
+ * technique of {@link SpecContract}, over the review of one spec. The ONE
+ * state rule: none > invalid > stale > needs-revision > current; a missing or
+ * invalid spec makes any review stale without comparing version or digest.
+ */
+export class SpecReviewContract {
+  /**
+   * @param file - the spec file the review covers (catalog name).
+   * @param review - the review file as probed, or undefined when there is none.
+   * @param spec - the spec's state, version and digest as the set classified it.
+   */
+  check(file: string, review: SpecFile | undefined, spec: SpecCoverage): SpecReview {
+    if (review === undefined) return { state: 'none', reasons: [] }
+    if (review.unreadable === true) return { state: 'invalid', reasons: ['could not be read'] }
+    if (review.size > SPEC_FILE_CAP) return { state: 'invalid', reasons: ['exceeds 256 KiB (split it; small focused files)'] }
+    const text = normalizeSpec(review.text ?? '')
+    if (text.trim().length === 0) return { state: 'invalid', reasons: ['is empty'] }
+    if (!text.startsWith('---\n') && text !== '---') return { state: 'invalid', reasons: [MISSING_FM] }
+    const parsed = parseFrontmatter(text)
+    if (parsed.meta === null) return { state: 'invalid', reasons: [MALFORMED_FM] }
+    const meta = parsed.meta
+    const reasons: string[] = []
+    const out: SpecReview = { state: 'invalid', reasons }
+    const parts: Partial<ReviewMeta> = {}
+    for (const key of REVIEW_KEYS) {
+      if (meta[key] === undefined || meta[key] === null) { reasons.push(`${key} missing`); continue }
+      const result = reviewMetaSchema.shape[key].safeParse(meta[key])
+      if (result.success) (parts as Record<string, unknown>)[key] = result.data
+      else reasons.push(reviewIssue(key, result.error.issues[0]!))
+    }
+    if (parts.reviewed_version !== undefined) out.version = parts.reviewed_version
+    if (parts.reviewed_digest !== undefined) out.digest = parts.reviewed_digest
+    if (parts.verdict !== undefined) out.verdict = parts.verdict
+    if (parts.round !== undefined) out.round = parts.round
+    if (parts.findings !== undefined) out.high = parts.findings.high
+    const body = parsed.body.trim()
+    out.body = body
+    if (body.length === 0) reasons.push('body is empty (only frontmatter)')
+    if (reasons.length > 0) return out
+    // Coverage before verdict: a spec that is not (yet) valid has nothing to be covered.
+    if (spec.state === 'missing') return { ...out, state: 'stale', reasons: [`${file} is missing (nothing to cover)`] }
+    if (spec.state === 'invalid') return { ...out, state: 'stale', reasons: [`${file} is invalid (fix the contract first)`] }
+    const stale: string[] = []
+    if (out.version !== spec.version) stale.push(`review covers version ${out.version} but ${file} is at version ${spec.version}`)
+    if (out.digest !== spec.digest) stale.push(`${file} text changed since the review (digest ${out.digest} ≠ ${spec.digest})`)
+    if (stale.length > 0) return { ...out, state: 'stale', reasons: stale }
+    if (out.verdict !== 'approved') return { ...out, state: 'needs-revision', reasons: [`review verdict is ${out.verdict}`] }
+    if ((out.high ?? 0) > 0) return { ...out, state: 'needs-revision', reasons: [`review is approved with findings.high ${out.high} (must be 0)`] }
+    return { ...out, state: 'current', reasons: [] }
+  }
+}
+
+// ── The order gate (comp-60 R4) ──
+
+/** The gate of the chain of the agents: every reason a brief of `file` is refused with. Static, stateless. */
+export class SpecOrder {
+  private constructor() {}
+
+  /**
+   * @param file - the requested catalog file.
+   * @param set - the classified set.
+   * @returns every violated condition of the DIRECT predecessors, in catalog order; empty when released.
+   */
+  static gate(file: string, set: SpecSetData): string[] {
+    const reasons: string[] = []
+    for (const p of SpecCatalog.predecessors(file)) {
+      const entry = set.entries.find(e => e.file === p)!
+      if (entry.state !== 'approved') {
+        reasons.push(entry.state === 'invalid'
+          ? `${p} is invalid (needs approved): ${entry.reasons.join('; ')}`
+          : `${p} is ${entry.state} (needs approved)`)
+        if (entry.state !== 'draft') continue
+      }
+      const review = entry.review
+      if (review === undefined) {
+        reasons.push(`${p} has no review (needs a current review: verdict approved, findings.high 0, covering version ${entry.version} and digest ${entry.digest})`)
+      } else if (review.state === 'stale') reasons.push(`${p} review is stale: ${review.reasons.join('; ')}`)
+      else if (review.state === 'needs-revision') reasons.push(`${p} review needs-revision: ${review.reasons.join('; ')}`)
+      else if (review.state === 'invalid') reasons.push(`${p} review is invalid: ${review.reasons.join('; ')}`)
+    }
+    return reasons
+  }
+}
+
+// ── The two briefs (comp-60 R5, R7) ──
+
+/** One predecessor as the brief carries it: the whole file. */
+export interface SpecBriefPredecessor { file: string; version?: number; digest?: string; text: string }
+
+/** What the author's brief carries (Model side; `formatSpecBrief` renders it). */
+export interface SpecBriefData {
+  file: string
+  entry: SpecCatalogEntry
+  predecessors: SpecBriefPredecessor[]
+  /** The file as it is on disk, when it exists (even invalid). */
+  current?: { state: SpecState; version?: number; status?: 'draft' | 'approved'; digest?: string; reasons: string[]; text: string }
+  previousReview?: SpecReview
+  nextVersion: number
+  reviewPath: string
+  dependents: string[]
+}
+
+/** What the reviewer's brief carries. */
+export interface SpecReviewBriefData {
+  file: string
+  entry: SpecCatalogEntry
+  spec: { version: number; status: 'draft' | 'approved'; digest: string; ids: string[]; text: string }
+  predecessors: SpecBriefPredecessor[]
+  previousReview?: SpecReview
+  round: number
+  orderWarnings: string[]
+  reviewPath: string
+  dependents: string[]
+}
+
+function predecessorsOf(file: string, set: SpecSetData, texts: Map<string, string>): SpecBriefPredecessor[] {
+  const out: SpecBriefPredecessor[] = []
+  for (const p of SpecCatalog.predecessors(file)) {
+    const entry = set.entries.find(e => e.file === p)!
+    const text = texts.get(p)
+    if (entry.state === 'missing' || text === undefined) continue
+    out.push({ file: p, ...entry.version !== undefined ? { version: entry.version } : {}, ...entry.digest !== undefined ? { digest: entry.digest } : {}, text })
+  }
+  return out
+}
+
+function textsOf(probe: SpecsProbe): Map<string, string> {
+  const texts = new Map<string, string>()
+  if (probe.kind === 'dir') for (const f of probe.files) if (f.text !== undefined) texts.set(f.name, f.text)
+  return texts
+}
+
+/** The author's brief (comp-60 R5): refused by the order gate; otherwise everything the responsible agent needs. */
+export class SpecBrief {
+  private constructor() {}
+
+  static of(file: string, probe: SpecsProbe): SpecBriefData {
+    const set = SpecSet.of(probe)
+    const reasons = SpecOrder.gate(file, set)
+    if (reasons.length > 0) throw new ScrumError('spec-order', `${file}: ${reasons.join('; ')} — write and approve the predecessors first`)
+    const entry = SpecCatalog.entry(file)!
+    const texts = textsOf(probe)
+    const own = set.entries.find(e => e.file === file)!
+    const text = texts.get(file)
+    const current = own.state === 'missing' || text === undefined
+      ? undefined
+      : {
+        state: own.state,
+        ...own.version !== undefined ? { version: own.version } : {},
+        ...own.status !== undefined ? { status: own.status } : {},
+        ...own.digest !== undefined ? { digest: own.digest } : {},
+        reasons: own.reasons, text,
+      }
+    return deepFreeze({
+      file, entry,
+      predecessors: predecessorsOf(file, set, texts),
+      ...current !== undefined ? { current } : {},
+      ...own.review !== undefined ? { previousReview: own.review } : {},
+      nextVersion: (current?.version ?? 0) + 1,
+      reviewPath: `specs/reviews/${reviewFileOf(file)}`,
+      dependents: SpecCatalog.dependents(file),
+    })
+  }
+}
+
+/** The reviewer's brief (comp-60 R7): refused for a missing or invalid spec; never by the order (warnings instead). */
+export class SpecReviewBrief {
+  private constructor() {}
+
+  static of(file: string, probe: SpecsProbe): SpecReviewBriefData {
+    const entry = SpecCatalog.entry(file)
+    if (entry === undefined) throw new ScrumError('invalid-input', `'${file}' is not a catalog spec file`)
+    const set = SpecSet.of(probe)
+    const own = set.entries.find(e => e.file === file)!
+    if (own.state === 'missing') throw new ScrumError('spec-review-brief', `${file}: write it first — scrum_spec_brief`)
+    if (own.state === 'invalid') throw new ScrumError('spec-review-brief', `${file}: fix the contract before asking for a review (${own.reasons.join('; ')})`)
+    const texts = textsOf(probe)
+    const previous = own.review
+    const round = previous === undefined ? 1 : previous.round !== undefined ? previous.round + 1 : 2
+    return deepFreeze({
+      file, entry,
+      spec: { version: own.version!, status: own.status!, digest: own.digest!, ids: own.ids, text: texts.get(file)! },
+      predecessors: predecessorsOf(file, set, texts),
+      ...previous !== undefined ? { previousReview: previous } : {},
+      round,
+      orderWarnings: SpecOrder.gate(file, set),
+      reviewPath: `specs/reviews/${reviewFileOf(file)}`,
+      dependents: SpecCatalog.dependents(file),
+    })
+  }
 }

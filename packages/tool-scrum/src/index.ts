@@ -18,6 +18,8 @@ import {
   formatImpact,
   formatReviewBrief,
   formatShelf,
+  formatSpecBrief,
+  formatSpecReviewBrief,
   formatSpecStatus,
   formatSpecsProbeMessage,
   formatSprints,
@@ -28,6 +30,9 @@ import {
   gitignoreNames,
   kindPrefix,
   SPEC_FILE_CAP,
+  SpecBrief,
+  SpecCatalog,
+  SpecReviewBrief,
   SpecSet,
   TASK_KINDS,
   TRACE_PROBE_CAP,
@@ -113,7 +118,9 @@ export function apply(ctx: Context): void {
       + '(PRD.md, GLOSSARY.md, RULES.md, ARCHITECTURE.md, TECH_STACK.md, SECURITY.md, API_SPEC.md, DATABASE_SCHEMA.md, UI_UX_SPEC.md, TESTS_SPEC.md, AGENTS.md, WORKFLOW.md, PROMPTS.md, TASKS.md, README.md; '
       + 'minimal: PRD + RULES + API_SPEC). One line per file: missing | draft | approved | invalid (every contract reason named) | unknown. '
       + 'A spec file is markdown with a frontmatter on line 1 — title, purpose, version (integer ≥ 1), status: draft | approved (approved is the human stamp), owner (product | domain | architect | api-data | test | agents | ops, the file\'s owner in the catalog) — '
-      + 'and stable ids at line start (R1, S1, P1, C1, CT-001), each declared once. The board never writes specs/.',
+      + 'and stable ids at line start (R1, S1, P1, C1, CT-001), each declared once. '
+      + 'Each spec may carry an adversarial review in specs/reviews/<stem>.review.md (frontmatter reviewer, reviewed_version, reviewed_digest, verdict, round, findings): '
+      + 'the line shows review current | stale | needs-revision | invalid | no review, and the header counts the current ones. The board never writes specs/.',
     parameters: {},
     output: TEXT_OUTPUT,
     execute(_args, exec) {
@@ -123,6 +130,49 @@ export function apply(ctx: Context): void {
       return Promise.resolve({ text: formatSpecStatus(SpecSet.of(listSpecFiles(cwd, SPEC_FILE_CAP))) })
     },
     presentCall: () => ({ card: 'generic', title: 'Read spec set status', kind: 'read' }),
+  }))
+
+  // comp-60: the pipeline of the agents — the author's brief (with the order gate) and the reviewer's brief, per spec file.
+  const SPEC_FILES = SpecCatalog.entries.map(e => e.file)
+  ctx.tools.register(defineTool({
+    name: 'scrum_spec_brief',
+    description:
+      'The briefing to hand to the agent responsible for one spec file of <workspace>/specs/ (SDD, comp-60): its role (Table 6.4 — Product Agent, Domain Analyst, '
+      + 'Software Architect, API/Data Designer, Test Agent), the predecessor specs in the chain as inputs (whole files), the current version of the file when it exists, '
+      + 'its previous review, the template of the file, the house conventions (frontmatter, stable ids, cross-refs, status: draft — approved is the human stamp) and the '
+      + 'response format with the frontmatter pre-filled (version = current + 1). Refused with every reason when a direct predecessor is not approved with a current review '
+      + '(PRD ← none; GLOSSARY, RULES, TASKS, README ← PRD; ARCHITECTURE, TECH_STACK, SECURITY ← RULES; API_SPEC, DATABASE_SCHEMA, UI_UX_SPEC ← ARCHITECTURE; '
+      + 'TESTS_SPEC ← RULES + API_SPEC; AGENTS, WORKFLOW, PROMPTS ← ARCHITECTURE). The tool writes nothing: the agent saves specs/<file> itself, then asks scrum_spec_review_brief.',
+    parameters: {
+      file: { type: 'string', required: true, enum: SPEC_FILES, description: 'The catalog spec file to write (or rewrite).' },
+    },
+    output: TEXT_OUTPUT,
+    execute(args, exec) {
+      const cwd = cwdOf(exec)
+      if (cwd === undefined) return Promise.resolve({ text: formatSpecsProbeMessage('no-workspace') })
+      return Promise.resolve({ text: formatSpecBrief(SpecBrief.of(args.file, listSpecFiles(cwd, SPEC_FILE_CAP))) })
+    },
+    presentCall: (args) => ({ card: 'generic', title: `Spec brief ${String(args.file ?? '')}`, kind: 'read' }),
+  }))
+
+  ctx.tools.register(defineTool({
+    name: 'scrum_spec_review_brief',
+    description:
+      'The briefing to hand to an adversarial reviewer (a subagent) of one spec file of <workspace>/specs/ (SDD, comp-60): the spec (version, digest, ids, text), '
+      + 'the predecessor specs for coherence, the previous review when one exists, order warnings when the chain behind it is not clean, the house conventions as a checklist, '
+      + 'owner-specific guiding questions and the mandatory response format with the review frontmatter pre-filled for this exact text. The report is saved by the reviewer as '
+      + 'specs/reviews/<stem>.review.md; a review is current when verdict approved, findings.high 0, reviewed_version and reviewed_digest equal the file\'s. '
+      + 'Refused when the file is missing or violates its contract.',
+    parameters: {
+      file: { type: 'string', required: true, enum: SPEC_FILES, description: 'The catalog spec file to review.' },
+    },
+    output: TEXT_OUTPUT,
+    execute(args, exec) {
+      const cwd = cwdOf(exec)
+      if (cwd === undefined) return Promise.resolve({ text: formatSpecsProbeMessage('no-workspace') })
+      return Promise.resolve({ text: formatSpecReviewBrief(SpecReviewBrief.of(args.file, listSpecFiles(cwd, SPEC_FILE_CAP))) })
+    },
+    presentCall: (args) => ({ card: 'generic', title: `Spec review brief ${String(args.file ?? '')}`, kind: 'read' }),
   }))
 
   ctx.tools.register(defineTool({

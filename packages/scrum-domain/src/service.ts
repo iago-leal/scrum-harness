@@ -24,8 +24,8 @@ import { TraceContract, TraceMatrix, matchPath, normalizePath, pathIssue, traceG
 import type { TraceField, TraceGate, TraceMatrixData } from './traces.ts'
 import { TASK_KINDS, splitKindPrefix, taskNumber } from './kind.ts'
 import type { TaskKind } from './kind.ts'
-import { SpecSet } from './specs.ts'
-import type { SpecSetData, SpecsProbe } from './specs.ts'
+import { SpecBrief, SpecReviewBrief, SpecSet } from './specs.ts'
+import type { SpecBriefData, SpecReviewBriefData, SpecSetData, SpecsProbe } from './specs.ts'
 import {
   BOARD_COLUMNS,
   COMPONENT_PHASES,
@@ -527,6 +527,26 @@ export class ScrumBoard {
   specs(probe: SpecsProbe): SpecSetData {
     return SpecSet.of(probe)
   }
+  /**
+   * The author's brief of one spec file (comp-60 R5): the order gate, then
+   * the inputs. Delegation for callers that already hold a board; the brief
+   * itself is stateless.
+   * @param file - catalog file name.
+   * @param probe - what the probe found at `<workspace>/specs`.
+   */
+  specBrief(file: string, probe: SpecsProbe): SpecBriefData {
+    return SpecBrief.of(file, probe)
+  }
+
+  /**
+   * The reviewer's brief of one spec file (comp-60 R7).
+   * @param file - catalog file name.
+   * @param probe - what the probe found at `<workspace>/specs`.
+   */
+  specReviewBrief(file: string, probe: SpecsProbe): SpecReviewBriefData {
+    return SpecReviewBrief.of(file, probe)
+  }
+
 
   /**
    * How many live titles (the four levels of the tree) and how many goals

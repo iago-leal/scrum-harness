@@ -235,7 +235,7 @@ describe('SPEC_ID and SpecContract.ids (R3)', () => {
 
 describe('SpecSet.of (R5)', () => {
   const dir = (files: SpecFile[]): SpecsProbe => ({ kind: 'dir', files })
-  const zero = { minimal: { approved: 0, total: 3 }, present: 0, invalid: 0, unknown: 0, complete: false }
+  const zero = { minimal: { approved: 0, total: 3 }, present: 0, invalid: 0, unknown: 0, complete: false, reviewed: 0 }
 
   it('absent and not-a-directory yield exists: false with fifteen missing entries and a zero summary', () => {
     const absent = SpecSet.of({ kind: 'absent' })
@@ -285,12 +285,12 @@ describe('SpecSet.of (R5)', () => {
     expect(notes.owner).toBeUndefined()
     expect(set.entries.find(e => e.file === 'prd.md')).toEqual({ file: 'prd.md', minimal: false, state: 'unknown', ids: [], reasons: [], caseOf: 'PRD.md' })
     // present counts catalog files on disk; invalid counts catalog only; complete needs every minimal approved and no invalid.
-    expect(set.summary).toEqual({ minimal: { approved: 2, total: 3 }, present: 4, invalid: 1, unknown: 3, complete: false })
+    expect(set.summary).toEqual({ minimal: { approved: 2, total: 3 }, present: 4, invalid: 1, unknown: 3, complete: false, reviewed: 0 })
   })
 
   it('complete is true only when the three minimal files are approved and no catalog file is invalid', () => {
     const minimal = ['PRD.md', 'RULES.md', 'API_SPEC.md'].map(f => file(f, fm(f, { status: 'approved' })))
-    expect(SpecSet.of(dir(minimal)).summary).toEqual({ minimal: { approved: 3, total: 3 }, present: 3, invalid: 0, unknown: 0, complete: true })
+    expect(SpecSet.of(dir(minimal)).summary).toEqual({ minimal: { approved: 3, total: 3 }, present: 3, invalid: 0, unknown: 0, complete: true, reviewed: 0 })
     const withDraftReadme = [...minimal, file('README.md', fm('README.md'))]
     expect(SpecSet.of(dir(withDraftReadme)).summary).toMatchObject({ present: 4, complete: true })
     const withInvalidReadme = [...minimal, file('README.md', '# index without frontmatter')]
@@ -322,5 +322,271 @@ describe('SpecSet.of (R5)', () => {
     expect(Object.isFrozen(set.entries[0])).toBe(true)
     expect(Object.isFrozen(set.entries[0].ids)).toBe(true)
     expect(Object.isFrozen(set.summary)).toBe(true)
+  })
+})
+
+// ── comp-60: the pipeline of the agents — predecessors, reviews on disk, the order gate, the two briefs ──
+// Written BEFORE the code (TDD): every case maps to a requirement of comp-60.
+import { specReviewText, specText } from '@scrum-harness/test-support/src/fixtures.ts'
+import {
+  SPEC_PREDECESSORS, SpecBrief, SpecOrder, SpecReviewBrief, SpecReviewContract, reviewFileOf, specOfReview,
+} from '../src/specs.ts'
+import type { SpecReview } from '../src/specs.ts'
+
+/** A probe of specs/ (+ reviews/) from texts. */
+function probe(specs: Record<string, string>, reviews?: Record<string, string>): SpecsProbe {
+  const files = Object.entries(specs).map(([name, text]) => file(name, text))
+  return reviews === undefined
+    ? { kind: 'dir', files }
+    : { kind: 'dir', files, reviews: Object.entries(reviews).map(([name, text]) => file(name, text)) }
+}
+/** The digest of a spec text as the contract computes it. */
+const digestOf = (text: string): string => new SpecContract().check('PRD.md', file('PRD.md', text)).digest!
+/** An approved, currently-reviewed spec: the pair of files. */
+function approved(fileName: string, body = 'Body.'): { spec: string; review: string } {
+  const spec = specText(fileName, { status: 'approved', version: 2, body })
+  const digest = new SpecContract().check(fileName, file(fileName, spec)).digest!
+  return { spec, review: specReviewText(fileName, { version: 2, digest }) }
+}
+
+describe('SPEC_PREDECESSORS and SpecCatalog.predecessors / dependents (comp-60 R1)', () => {
+  it('covers the fifteen files, PRD first with none, in the chapter chain', () => {
+    expect(Object.keys(SPEC_PREDECESSORS).sort()).toEqual(SpecCatalog.entries.map(e => e.file).sort())
+    expect(SpecCatalog.predecessors('PRD.md')).toEqual([])
+    expect(SpecCatalog.predecessors('GLOSSARY.md')).toEqual(['PRD.md'])
+    expect(SpecCatalog.predecessors('RULES.md')).toEqual(['PRD.md'])
+    expect(SpecCatalog.predecessors('ARCHITECTURE.md')).toEqual(['RULES.md'])
+    expect(SpecCatalog.predecessors('SECURITY.md')).toEqual(['RULES.md'])
+    expect(SpecCatalog.predecessors('API_SPEC.md')).toEqual(['ARCHITECTURE.md'])
+    expect(SpecCatalog.predecessors('UI_UX_SPEC.md')).toEqual(['ARCHITECTURE.md'])
+    expect(SpecCatalog.predecessors('TESTS_SPEC.md')).toEqual(['RULES.md', 'API_SPEC.md'])
+    expect(SpecCatalog.predecessors('AGENTS.md')).toEqual(['ARCHITECTURE.md'])
+    expect(SpecCatalog.predecessors('README.md')).toEqual(['PRD.md'])
+    expect(Object.isFrozen(SPEC_PREDECESSORS)).toBe(true)
+  })
+
+  it('is acyclic and every predecessor is a catalog file', () => {
+    const visit = (node: string, path: string[]): void => {
+      expect(path).not.toContain(node)
+      for (const p of SPEC_PREDECESSORS[node]!) {
+        expect(SpecCatalog.entry(p)).toBeDefined()
+        visit(p, [...path, node])
+      }
+    }
+    for (const node of Object.keys(SPEC_PREDECESSORS)) visit(node, [])
+  })
+
+  it('dependents is the inverse, in catalog order; both refuse a file outside the catalog', () => {
+    expect(SpecCatalog.dependents('PRD.md')).toEqual(['GLOSSARY.md', 'RULES.md', 'TASKS.md', 'README.md'])
+    expect(SpecCatalog.dependents('RULES.md')).toEqual(['ARCHITECTURE.md', 'TECH_STACK.md', 'SECURITY.md', 'TESTS_SPEC.md'])
+    expect(SpecCatalog.dependents('TESTS_SPEC.md')).toEqual([])
+    expect(() => SpecCatalog.predecessors('prd.md')).toThrow(ScrumError)
+    expect(() => SpecCatalog.dependents('X.md')).toThrow(/not a catalog spec file/)
+  })
+
+  it('names the review file of a spec and back', () => {
+    expect(reviewFileOf('PRD.md')).toBe('PRD.review.md')
+    expect(reviewFileOf('API_SPEC.md')).toBe('API_SPEC.review.md')
+    expect(specOfReview('PRD.review.md')).toBe('PRD.md')
+    expect(specOfReview('notes.review.md')).toBeUndefined()
+    expect(specOfReview('PRD.md')).toBeUndefined()
+  })
+})
+
+describe('SpecReviewContract — one state rule (comp-60 R2)', () => {
+  const contract = new SpecReviewContract()
+  const prd = specText('PRD.md', { status: 'draft', version: 2 })
+  const prdCheck = { state: 'draft' as const, version: 2, digest: digestOf(prd) }
+  const review = (over: Parameters<typeof specReviewText>[1]) => file('PRD.review.md', specReviewText('PRD.md', over))
+
+  it('none without a file', () => {
+    expect(contract.check('PRD.md', undefined, prdCheck)).toEqual({ state: 'none', reasons: [] })
+  })
+
+  it('invalid (a)–(e) in order, with whatever parsed travelling', () => {
+    expect(contract.check('PRD.md', { name: 'PRD.review.md', size: 0, unreadable: true }, prdCheck)).toMatchObject({ state: 'invalid', reasons: ['could not be read'] })
+    expect(contract.check('PRD.md', { name: 'PRD.review.md', size: SPEC_FILE_CAP + 1 }, prdCheck).reasons).toEqual(['exceeds 256 KiB (split it; small focused files)'])
+    expect(contract.check('PRD.md', file('PRD.review.md', '  \n'), prdCheck).reasons).toEqual(['is empty'])
+    expect(contract.check('PRD.md', file('PRD.review.md', 'no fence'), prdCheck).reasons).toEqual(['frontmatter missing (must start on line 1 with ---)'])
+    expect(contract.check('PRD.md', file('PRD.review.md', '---\nreviewer: [a\n---\nx'), prdCheck).reasons[0]).toMatch(/frontmatter malformed/)
+    const bare = contract.check('PRD.md', file('PRD.review.md', `---\nreviewed_version: 2\nreviewed_digest: 00123456\nverdict: approved\nround: 1\nfindings: { high: 0, medium: 0, low: 0 }\n---\nbody`), prdCheck)
+    expect(bare.state).toBe('invalid')
+    expect(bare.reasons).toEqual(['reviewer missing', 'reviewed_digest must be a quoted string (write reviewed_digest: "…" — bare digits are parsed as a number)'])
+    expect(bare.version).toBe(2)
+    expect(bare.round).toBe(1)
+    const noBody = contract.check('PRD.md', file('PRD.review.md', specReviewText('PRD.md', { version: 2, digest: prdCheck.digest, body: '' })), prdCheck)
+    expect(noBody.reasons).toEqual(['body is empty (only frontmatter)'])
+    expect(noBody).toMatchObject({ state: 'invalid', version: 2, digest: prdCheck.digest, verdict: 'approved', round: 1, high: 0 })
+  })
+
+  it('stale for a missing or invalid spec, without comparing version or digest', () => {
+    const r = review({ version: 2, digest: prdCheck.digest })
+    expect(contract.check('PRD.md', r, { state: 'missing' })).toMatchObject({ state: 'stale', reasons: ['PRD.md is missing (nothing to cover)'] })
+    expect(contract.check('PRD.md', r, { state: 'invalid', version: 2, digest: prdCheck.digest })).toMatchObject({ state: 'stale', reasons: ['PRD.md is invalid (fix the contract first)'] })
+  })
+
+  it('stale when version or digest differ, accumulating both', () => {
+    expect(contract.check('PRD.md', review({ version: 1, digest: prdCheck.digest }), prdCheck))
+      .toMatchObject({ state: 'stale', reasons: ['review covers version 1 but PRD.md is at version 2'] })
+    expect(contract.check('PRD.md', review({ version: 2, digest: 'deadbeef' }), prdCheck))
+      .toMatchObject({ state: 'stale', reasons: [`PRD.md text changed since the review (digest deadbeef ≠ ${prdCheck.digest})`] })
+    expect(contract.check('PRD.md', review({ version: 1, digest: 'deadbeef' }), prdCheck).reasons).toHaveLength(2)
+  })
+
+  it('needs-revision when it covers the text but the verdict or the high count says no; current otherwise', () => {
+    expect(contract.check('PRD.md', review({ version: 2, digest: prdCheck.digest, verdict: 'needs-revision' }), prdCheck))
+      .toMatchObject({ state: 'needs-revision', reasons: ['review verdict is needs-revision'] })
+    expect(contract.check('PRD.md', review({ version: 2, digest: prdCheck.digest, high: 2 }), prdCheck))
+      .toMatchObject({ state: 'needs-revision', reasons: ['review is approved with findings.high 2 (must be 0)'] })
+    const current = contract.check('PRD.md', review({ version: 2, digest: prdCheck.digest, round: 3 }), prdCheck)
+    expect(current).toMatchObject({ state: 'current', reasons: [], version: 2, digest: prdCheck.digest, verdict: 'approved', round: 3, high: 0 })
+    expect(current.body).toBe('No blocking finding.')
+  })
+})
+
+describe('SpecSet.of with reviews (comp-60 R3)', () => {
+  it('attaches the review to each entry, omits it when none, counts reviewed, keeps complete unchanged', () => {
+    const prd = approved('PRD.md')
+    const rules = specText('RULES.md', { status: 'approved', body: RULES_BODY })
+    const set = SpecSet.of(probe(
+      { 'PRD.md': prd.spec, 'RULES.md': rules, 'API_SPEC.md': specText('API_SPEC.md', { status: 'approved' }) },
+      { 'PRD.review.md': prd.review, 'RULES.review.md': specReviewText('RULES.md', { version: 9, digest: 'x' }) },
+    ))
+    const byFile = new Map(set.entries.map(e => [e.file, e]))
+    expect(byFile.get('PRD.md')!.review).toMatchObject({ state: 'current' })
+    expect(byFile.get('RULES.md')!.review).toMatchObject({ state: 'stale' })
+    expect(byFile.get('API_SPEC.md')!.review).toBeUndefined()
+    expect(byFile.get('GLOSSARY.md')!.review).toBeUndefined()
+    expect(set.summary).toEqual({ minimal: { approved: 3, total: 3 }, present: 3, invalid: 0, unknown: 0, complete: true, reviewed: 1 })
+    expect(set.unknownReviews).toEqual([])
+    expect(Object.isFrozen(byFile.get('PRD.md')!.review)).toBe(true)
+  })
+
+  it('a review of a missing spec rides the missing entry as stale; unknown reviews are listed with caseOf; a stray review in specs/ gets a hint', () => {
+    const set = SpecSet.of(probe(
+      { 'PRD.review.md': 'stray' },
+      { 'PRD.review.md': specReviewText('PRD.md', { version: 1, digest: 'abcd1234' }), 'notes.review.md': 'x', 'prd.review.md': 'y' },
+    ))
+    expect(set.entries.find(e => e.file === 'PRD.md')!.review).toMatchObject({ state: 'stale', reasons: ['PRD.md is missing (nothing to cover)'] })
+    expect(set.unknownReviews).toEqual([{ file: 'notes.review.md' }, { file: 'prd.review.md', caseOf: 'PRD.review.md' }])
+    expect(set.entries.find(e => e.file === 'PRD.review.md')).toMatchObject({ state: 'unknown', hint: 'reviews go in specs/reviews/' })
+    expect(set.summary.reviewed).toBe(0)
+  })
+
+  it('a probe without reviews reads as no reviews; a duplicate review name is refused', () => {
+    const set = SpecSet.of(probe({ 'PRD.md': specText('PRD.md') }))
+    expect(set.entries[0]!.review).toBeUndefined()
+    expect(set.unknownReviews).toEqual([])
+    const dup: SpecsProbe = { kind: 'dir', files: [], reviews: [file('PRD.review.md', 'a'), file('PRD.review.md', 'b')] }
+    expect(() => SpecSet.of(dup)).toThrow(/twice/)
+  })
+})
+
+describe('SpecOrder.gate (comp-60 R4)', () => {
+  it('PRD is never barred; a predecessor missing, draft or invalid names only its state', () => {
+    expect(SpecOrder.gate('PRD.md', SpecSet.of({ kind: 'absent' }))).toEqual([])
+    expect(SpecOrder.gate('RULES.md', SpecSet.of({ kind: 'absent' }))).toEqual(['PRD.md is missing (needs approved)'])
+    // A draft predecessor names both what it lacks (R4: the review is checked for draft and approved).
+    const draft = specText('PRD.md')
+    expect(SpecOrder.gate('RULES.md', SpecSet.of(probe({ 'PRD.md': draft })))).toEqual([
+      'PRD.md is draft (needs approved)',
+      `PRD.md has no review (needs a current review: verdict approved, findings.high 0, covering version 1 and digest ${digestOf(draft)})`,
+    ])
+    const invalid = SpecOrder.gate('RULES.md', SpecSet.of(probe({ 'PRD.md': '---\ntitle: "x"\n---\nbody' })))
+    expect(invalid).toEqual(['PRD.md is invalid (needs approved): purpose missing; version missing; status missing; owner missing'])
+  })
+
+  it('an approved predecessor still needs a current review', () => {
+    const prd = approved('PRD.md')
+    const set = (review?: string) => SpecSet.of(probe({ 'PRD.md': prd.spec }, review === undefined ? undefined : { 'PRD.review.md': review }))
+    const digest = digestOf(prd.spec)
+    expect(SpecOrder.gate('RULES.md', set())).toEqual([`PRD.md has no review (needs a current review: verdict approved, findings.high 0, covering version 2 and digest ${digest})`])
+    expect(SpecOrder.gate('RULES.md', set(specReviewText('PRD.md', { version: 1, digest })))).toEqual(['PRD.md review is stale: review covers version 1 but PRD.md is at version 2'])
+    expect(SpecOrder.gate('RULES.md', set(specReviewText('PRD.md', { version: 2, digest, high: 1 })))).toEqual(['PRD.md review needs-revision: review is approved with findings.high 1 (must be 0)'])
+    expect(SpecOrder.gate('RULES.md', set('no fence'))).toEqual(['PRD.md review is invalid: frontmatter missing (must start on line 1 with ---)'])
+    expect(SpecOrder.gate('RULES.md', set(prd.review))).toEqual([])
+  })
+
+  it('names every predecessor, in catalog order', () => {
+    const rules = approved('RULES.md', RULES_BODY)
+    const api = specText('API_SPEC.md')
+    const reasons = SpecOrder.gate('TESTS_SPEC.md', SpecSet.of(probe({ 'RULES.md': rules.spec, 'API_SPEC.md': api })))
+    expect(reasons).toEqual([
+      `RULES.md has no review (needs a current review: verdict approved, findings.high 0, covering version 2 and digest ${digestOf(rules.spec)})`,
+      'API_SPEC.md is draft (needs approved)',
+      `API_SPEC.md has no review (needs a current review: verdict approved, findings.high 0, covering version 1 and digest ${digestOf(api)})`,
+    ])
+    expect(() => SpecOrder.gate('nope.md', SpecSet.of({ kind: 'absent' }))).toThrow(ScrumError)
+  })
+})
+
+describe('SpecBrief.of (comp-60 R5)', () => {
+  it('refuses with spec-order naming the requested file first and every reason', () => {
+    let caught: unknown
+    const rules = specText('RULES.md')
+    try { SpecBrief.of('TESTS_SPEC.md', probe({ 'RULES.md': rules })) } catch (error) { caught = error }
+    expect(caught).toBeInstanceOf(ScrumError)
+    expect((caught as ScrumError).code).toBe('spec-order')
+    expect((caught as ScrumError).message).toBe(`TESTS_SPEC.md: RULES.md is draft (needs approved); RULES.md has no review (needs a current review: verdict approved, findings.high 0, covering version 1 and digest ${digestOf(rules)}); API_SPEC.md is missing (needs approved) — write and approve the predecessors first`)
+  })
+
+  it('PRD with no specs/ at all: no predecessors, no current version, version 1, dependents', () => {
+    const brief = SpecBrief.of('PRD.md', { kind: 'absent' })
+    expect(brief).toMatchObject({ file: 'PRD.md', entry: { owner: 'product', minimal: true }, predecessors: [], nextVersion: 1, reviewPath: 'specs/reviews/PRD.review.md' })
+    expect(brief.current).toBeUndefined()
+    expect(brief.previousReview).toBeUndefined()
+    expect(brief.dependents).toEqual(['GLOSSARY.md', 'RULES.md', 'TASKS.md', 'README.md'])
+    expect(SpecBrief.of('PRD.md', { kind: 'not-a-directory' }).predecessors).toEqual([])
+  })
+
+  it('carries the predecessors whole, the current version (even invalid) and the previous review', () => {
+    const prd = approved('PRD.md', 'Vision.')
+    const rulesDraft = specText('RULES.md', { version: 3, body: RULES_BODY })
+    const brief = SpecBrief.of('RULES.md', probe(
+      { 'PRD.md': prd.spec, 'RULES.md': rulesDraft },
+      { 'PRD.review.md': prd.review, 'RULES.review.md': specReviewText('RULES.md', { version: 3, digest: 'nope', verdict: 'needs-revision', high: 1, body: 'H1 — fix R2.' }) },
+    ))
+    expect(brief.predecessors).toEqual([{ file: 'PRD.md', version: 2, digest: digestOf(prd.spec), text: prd.spec }])
+    expect(brief.current).toMatchObject({ state: 'draft', version: 3, status: 'draft', reasons: [], text: rulesDraft })
+    expect(brief.nextVersion).toBe(4)
+    expect(brief.previousReview).toMatchObject({ state: 'stale', body: 'H1 — fix R2.' })
+    const invalid = SpecBrief.of('RULES.md', probe({ 'PRD.md': prd.spec, 'RULES.md': '---\ntitle: "r"\n---\nR1 — x' }, { 'PRD.review.md': prd.review }))
+    expect(invalid.current).toMatchObject({ state: 'invalid', reasons: ['purpose missing', 'version missing', 'status missing', 'owner missing'] })
+    expect(invalid.nextVersion).toBe(1)
+    expect(Object.isFrozen(brief.predecessors)).toBe(true)
+  })
+})
+
+describe('SpecReviewBrief.of (comp-60 R7)', () => {
+  it('refuses a missing or invalid spec, never the order', () => {
+    expect(() => SpecReviewBrief.of('PRD.md', { kind: 'absent' })).toThrow(/PRD\.md: write it first — scrum_spec_brief/)
+    let caught: unknown
+    try { SpecReviewBrief.of('PRD.md', probe({ 'PRD.md': '---\ntitle: "x"\n---\nbody' })) } catch (error) { caught = error }
+    expect((caught as ScrumError).code).toBe('spec-review-brief')
+    expect((caught as ScrumError).message).toBe('PRD.md: fix the contract before asking for a review (purpose missing; version missing; status missing; owner missing)')
+    // RULES with a draft PRD: allowed, with the order warnings attached.
+    const brief = SpecReviewBrief.of('RULES.md', probe({ 'PRD.md': specText('PRD.md'), 'RULES.md': specText('RULES.md', { body: RULES_BODY }) }))
+    expect(brief.orderWarnings[0]).toBe('PRD.md is draft (needs approved)')
+    expect(brief.orderWarnings).toHaveLength(2)
+    expect(brief.spec).toMatchObject({ version: 1, status: 'draft', ids: ['R1', 'R2', 'S1'] })
+    expect(brief.round).toBe(1)
+    expect(brief.dependents).toEqual(['ARCHITECTURE.md', 'TECH_STACK.md', 'SECURITY.md', 'TESTS_SPEC.md'])
+    expect(brief.reviewPath).toBe('specs/reviews/RULES.review.md')
+  })
+
+  it('round follows the parsed round even on an invalid review; 2 without a parseable round', () => {
+    const prd = specText('PRD.md', { version: 2 })
+    const digest = digestOf(prd)
+    const withRound = SpecReviewBrief.of('PRD.md', probe({ 'PRD.md': prd }, { 'PRD.review.md': specReviewText('PRD.md', { version: 2, digest, round: 3, body: '' }) }))
+    expect(withRound.previousReview).toMatchObject({ state: 'invalid', round: 3 })
+    expect(withRound.round).toBe(4)
+    const noRound = SpecReviewBrief.of('PRD.md', probe({ 'PRD.md': prd }, { 'PRD.review.md': 'free text' }))
+    expect(noRound.round).toBe(2)
+    const current = SpecReviewBrief.of('PRD.md', probe({ 'PRD.md': prd }, { 'PRD.review.md': specReviewText('PRD.md', { version: 2, digest }) }))
+    expect(current.round).toBe(2)
+    expect(current.previousReview).toMatchObject({ state: 'current' })
+    expect(current.orderWarnings).toEqual([])
+    const _typed: SpecReview | undefined = current.previousReview
+    void _typed
   })
 })

@@ -85,6 +85,41 @@ describe('listSpecFiles (comp-59 R4)', () => {
   )
 })
 
+describe('listSpecFiles — specs/reviews (comp-60 R2)', () => {
+  let ws: string
+  beforeEach(() => { ws = mkdtempSync(join(tmpdir(), 'scrum-reviews-')) })
+  afterEach(() => { rmSync(ws, { recursive: true, force: true }) })
+
+  it('the reviews key is omitted when specs/reviews is absent, a file or a broken symlink', () => {
+    mkdirSync(join(ws, 'specs'))
+    writeFileSync(join(ws, 'specs', 'PRD.md'), 'p')
+    expect(listSpecFiles(ws, CAP)).toEqual({ kind: 'dir', files: [{ name: 'PRD.md', size: 1, text: 'p' }] })
+    writeFileSync(join(ws, 'specs', 'reviews'), 'a file')
+    expect(listSpecFiles(ws, CAP)).not.toHaveProperty('reviews')
+    rmSync(join(ws, 'specs', 'reviews'))
+    symlinkSync(join(ws, 'nowhere'), join(ws, 'specs', 'reviews'))
+    expect(listSpecFiles(ws, CAP)).not.toHaveProperty('reviews')
+  })
+
+  it('lists only regular *.review.md files of specs/reviews, flat, dot-names skipped, code-point order, same cap', () => {
+    mkdirSync(join(ws, 'specs', 'reviews', 'deep'), { recursive: true })
+    writeFileSync(join(ws, 'specs', 'RULES.md'), 'r')
+    writeFileSync(join(ws, 'specs', 'reviews', 'RULES.review.md'), 'rev')
+    writeFileSync(join(ws, 'specs', 'reviews', 'PRD.review.md'), 'x'.repeat(11))
+    writeFileSync(join(ws, 'specs', 'reviews', 'notes.md'), 'not a review name')
+    writeFileSync(join(ws, 'specs', 'reviews', '.hidden.review.md'), 'dot')
+    writeFileSync(join(ws, 'specs', 'reviews', 'deep', 'X.review.md'), 'deep')
+    expect(listSpecFiles(ws, 10)).toEqual({
+      kind: 'dir',
+      files: [{ name: 'RULES.md', size: 1, text: 'r' }],
+      reviews: [{ name: 'PRD.review.md', size: 11 }, { name: 'RULES.review.md', size: 3, text: 'rev' }],
+    })
+    rmSync(join(ws, 'specs', 'reviews'), { recursive: true })
+    mkdirSync(join(ws, 'specs', 'reviews'))
+    expect(listSpecFiles(ws, CAP)).toEqual({ kind: 'dir', files: [{ name: 'RULES.md', size: 1, text: 'r' }], reviews: [] })
+  })
+})
+
 describe('listWorkspaceFiles / resolveWorkspacePath (comp-49 R6, moved from tool-scrum)', () => {
   let ws: string
   beforeEach(() => {

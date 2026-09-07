@@ -16,5 +16,6 @@ export * from './contracts.ts'
 export * from './traces.ts'
 export * from './kind.ts'
 export * from './specs.ts'
+export * from './spec-brief.ts'
 
 export default ScrumService

@@ -1,6 +1,7 @@
 /**
- * The probe behind the project spec set (v0.24, comp-59 R4): the only
- * environment the spec reading touches. It lists `<cwd>/specs/*.md` FLAT —
+ * The probe behind the project spec set (v0.24, comp-59 R4; reviews since
+ * comp-60): the only environment the spec reading touches. It lists
+ * `<cwd>/specs/*.md` FLAT (and `specs/reviews/*.review.md` when that directory exists) —
  * regular files only, exact `.md` extension, dot names skipped, code-point
  * order — and hands back each file's size and (when within the cap) its
  * UTF-8 text. It knows no catalog and judges nothing: the Model
@@ -32,7 +33,8 @@ export interface SpecFile {
 export type SpecsProbe =
   | { kind: 'absent' }
   | { kind: 'not-a-directory' }
-  | { kind: 'dir'; files: SpecFile[] }
+  /** `reviews` (comp-60 R2) is present only when `<cwd>/specs/reviews` is a readable directory: `*.review.md`, flat, same rules. */
+  | { kind: 'dir'; files: SpecFile[]; reviews?: SpecFile[] }
 
 /**
  * List the spec files of one workspace.
@@ -55,13 +57,30 @@ export function listSpecFiles(cwd: string, cap: number): SpecsProbe {
   } catch {
     return { kind: 'dir', files: [] }
   }
+  const files = listMd(dir, entries, '.md', cap)
+  const reviews = listReviews(join(dir, 'reviews'), cap)
+  return reviews === undefined ? { kind: 'dir', files } : { kind: 'dir', files, reviews }
+}
+
+/** Regular files of `dir` with the given suffix, dot-names skipped, code-point order. */
+function listMd(dir: string, entries: Dirent[], suffix: string, cap: number): SpecFile[] {
   const files: SpecFile[] = []
   for (const entry of entries) {
-    if (!entry.isFile() || entry.name.startsWith('.') || !entry.name.endsWith('.md')) continue
+    if (!entry.isFile() || entry.name.startsWith('.') || !entry.name.endsWith(suffix)) continue
     files.push(readSpec(join(dir, entry.name), entry.name, cap))
   }
   files.sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0))
-  return { kind: 'dir', files }
+  return files
+}
+
+/** `specs/reviews/*.review.md`, or undefined when the directory is absent, a file, a broken symlink or unreadable (comp-60 R2). */
+function listReviews(dir: string, cap: number): SpecFile[] | undefined {
+  try {
+    if (!statSync(dir).isDirectory()) return undefined
+    return listMd(dir, readdirSync(dir, { withFileTypes: true }), '.review.md', cap)
+  } catch {
+    return undefined
+  }
 }
 
 /** Stat and (within the cap) read one spec file; any failure yields `unreadable`. */

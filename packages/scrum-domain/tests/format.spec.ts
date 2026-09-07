@@ -464,7 +464,8 @@ function specSet(entries: SpecEntry[], summary: Partial<SpecSetData['summary']> 
   return {
     exists,
     entries,
-    summary: { minimal: { approved: 0, total: 3 }, present: 0, invalid: 0, unknown: 0, complete: false, ...summary },
+    unknownReviews: [],
+    summary: { minimal: { approved: 0, total: 3 }, present: 0, invalid: 0, unknown: 0, complete: false, reviewed: 0, ...summary },
   }
 }
 const missing = (file: string, owner: SpecEntry['owner'], minimal = false): SpecEntry => ({ file, owner, minimal, state: 'missing', ids: [], reasons: [] })
@@ -517,20 +518,20 @@ describe('specsHeader / formatSpecStatus (comp-59 R6, R7)', () => {
     ], { minimal: { approved: 1, total: 3 }, present: 4, invalid: 1, unknown: 2 })
     expect(formatSpecStatus(set)).toBe([
       'Specs: 1/3 minimal approved · 4 present · 1 invalid · 2 unknown',
-      'PRD.md [approved v3 · a1b2c3d4] product · minimal — 12 ids (R1 … R12)',
+      'PRD.md [approved v3 · a1b2c3d4] product · minimal — 12 ids (R1 … R12) · no review',
       'GLOSSARY.md [missing] domain',
-      'RULES.md [draft v1 · 9f8e7d6c] domain · minimal — 3 ids (R1, R2, R3)',
+      'RULES.md [draft v1 · 9f8e7d6c] domain · minimal — 3 ids (R1, R2, R3) · no review',
       'ARCHITECTURE.md [missing] architect',
       'API_SPEC.md [invalid] api-data · minimal — version missing; status must be one of draft, approved',
-      'README.md [draft v1 · 00000000] ops — no ids',
+      'README.md [draft v1 · 00000000] ops — no ids · no review',
       'NOTES.md [unknown] — not in the catalog',
       'prd.md [unknown] — not in the catalog (case: PRD.md?)',
     ].join('\n'))
     // Six ids are all shown; seven collapse to first … last.
     const six = { ...set.entries[2]!, ids: ['R1', 'R2', 'R3', 'R4', 'R5', 'R6'] }
-    expect(formatSpecStatus(specSet([six])).split('\n')[1]).toBe('RULES.md [draft v1 · 9f8e7d6c] domain · minimal — 6 ids (R1, R2, R3, R4, R5, R6)')
+    expect(formatSpecStatus(specSet([six])).split('\n')[1]).toBe('RULES.md [draft v1 · 9f8e7d6c] domain · minimal — 6 ids (R1, R2, R3, R4, R5, R6) · no review')
     const seven = { ...six, ids: [...six.ids, 'S1'] }
-    expect(formatSpecStatus(specSet([seven])).split('\n')[1]).toBe('RULES.md [draft v1 · 9f8e7d6c] domain · minimal — 7 ids (R1 … S1)')
+    expect(formatSpecStatus(specSet([seven])).split('\n')[1]).toBe('RULES.md [draft v1 · 9f8e7d6c] domain · minimal — 7 ids (R1 … S1) · no review')
   })
 
   it('formatSpecStatus: unknown lines are capped at SPEC_UNKNOWN_CAP with a +N tail; a set that does not exist prints its probe message', () => {
@@ -541,5 +542,114 @@ describe('specsHeader / formatSpecStatus (comp-59 R6, R7)', () => {
     expect(lines[21]).toBe('  +3 unknown file(s) not shown')
     expect(formatSpecStatus(SpecSet.of({ kind: 'absent' }))).toBe(formatSpecsProbeMessage('absent'))
     expect(formatSpecStatus(SpecSet.of({ kind: 'not-a-directory' }))).toBe(formatSpecsProbeMessage('not-a-directory'))
+  })
+})
+
+// ── comp-60: the two spec briefs and the review-aware status (R3, R6, R7) — written before the code ──
+import { BRIEF_SPEC_LIMIT, SPEC_ROLES, SPEC_TEMPLATES, formatSpecBrief, formatSpecReviewBrief } from '../src/spec-brief.ts'
+import type { SpecBriefData, SpecReviewBriefData } from '../src/specs.ts'
+
+const PRD_TEXT = '---\ntitle: "PRD"\npurpose: "Why."\nversion: 2\nstatus: approved\nowner: product\n---\n## Visão\nA board.'
+
+describe('formatSpecStatus / specsHeader with reviews (comp-60 R3)', () => {
+  it('review suffixes on every line with a review, no review only on draft/approved, unknown reviews line, reviewed in the header', () => {
+    const set = specSet([
+      { file: 'PRD.md', owner: 'product', minimal: true, state: 'approved', version: 2, status: 'approved', digest: 'a1b2c3d4', ids: [], reasons: [], review: { state: 'current', reasons: [], version: 2, digest: 'a1b2c3d4', verdict: 'approved', round: 1, high: 0 } },
+      { file: 'GLOSSARY.md', owner: 'domain', minimal: false, state: 'missing', ids: [], reasons: [], review: { state: 'stale', reasons: ['GLOSSARY.md is missing (nothing to cover)'] } },
+      { file: 'RULES.md', owner: 'domain', minimal: true, state: 'draft', version: 3, status: 'draft', digest: '9f8e7d6c', ids: ['R1'], reasons: [], review: { state: 'stale', reasons: ['review covers version 2 but RULES.md is at version 3', 'RULES.md text changed since the review (digest 0000 ≠ 9f8e7d6c)'] } },
+      { file: 'API_SPEC.md', owner: 'api-data', minimal: true, state: 'invalid', ids: [], reasons: ['version missing'] },
+      { file: 'TESTS_SPEC.md', owner: 'test', minimal: false, state: 'draft', version: 1, status: 'draft', digest: '11111111', ids: [], reasons: [], review: { state: 'needs-revision', reasons: ['review verdict is needs-revision'] } },
+      { file: 'AGENTS.md', owner: 'agents', minimal: false, state: 'approved', version: 1, status: 'approved', digest: '22222222', ids: [], reasons: [], review: { state: 'invalid', reasons: ['reviewer missing'] } },
+      { file: 'X.review.md', minimal: false, state: 'unknown', ids: [], reasons: [], hint: 'reviews go in specs/reviews/' },
+    ], { minimal: { approved: 2, total: 3 }, present: 5, invalid: 1, unknown: 1, reviewed: 1 })
+    const lines = formatSpecStatus({ ...set, unknownReviews: [{ file: 'notes.review.md' }, { file: 'prd.review.md', caseOf: 'PRD.review.md' }] }).split('\n')
+    expect(lines[0]).toBe('Specs: 2/3 minimal approved · 5 present · 1 invalid · 1 unknown · 1 reviewed')
+    expect(lines[1]).toBe('PRD.md [approved v2 · a1b2c3d4] product · minimal — no ids · review current')
+    expect(lines[2]).toBe('GLOSSARY.md [missing] domain · review stale: nothing to cover')
+    expect(lines[3]).toBe('RULES.md [draft v3 · 9f8e7d6c] domain · minimal — 1 id (R1) · review stale: review covers version 2 but RULES.md is at version 3; RULES.md text changed since the review (digest 0000 ≠ 9f8e7d6c)')
+    expect(lines[4]).toBe('API_SPEC.md [invalid] api-data · minimal — version missing')
+    expect(lines[5]).toBe('TESTS_SPEC.md [draft v1 · 11111111] test — no ids · review needs-revision: review verdict is needs-revision')
+    expect(lines[6]).toBe('AGENTS.md [approved v1 · 22222222] agents — no ids · review invalid: reviewer missing')
+    expect(lines[7]).toBe('X.review.md [unknown] — not in the catalog (reviews go in specs/reviews/)')
+    expect(lines[8]).toBe('Unknown reviews: notes.review.md, prd.review.md (did you mean PRD.review.md?)')
+    expect(lines).toHaveLength(9)
+    expect(specsHeader(specSet([], { reviewed: 0 }))).toBe('Specs: 0/3 minimal approved')
+  })
+})
+
+describe('formatSpecBrief (comp-60 R6)', () => {
+  const base: SpecBriefData = {
+    file: 'RULES.md', entry: { file: 'RULES.md', owner: 'domain', purpose: 'Invariant rules.', minimal: true },
+    predecessors: [{ file: 'PRD.md', version: 2, digest: 'a1b2c3d4', text: PRD_TEXT }],
+    nextVersion: 1, reviewPath: 'specs/reviews/RULES.review.md', dependents: ['ARCHITECTURE.md', 'TECH_STACK.md', 'SECURITY.md', 'TESTS_SPEC.md'],
+  }
+
+  it('blocks in order for a file that does not exist yet; role from the owner; template with accents; prefilled frontmatter', () => {
+    const text = formatSpecBrief(base)
+    const heads = text.split('\n').filter(l => l.startsWith('#'))
+    expect(heads[0]).toBe('# Spec brief — RULES.md (Domain Analyst)')
+    // The blocks in order (the template's own headings sit inside the Template block).
+    const order = ['## Your role', '## Inputs — predecessor specs', '### specs/PRD.md (version 2, digest a1b2c3d4)', '## This file does not exist yet', '## Template', '## House conventions', '## Response format']
+    const positions = order.map(h => text.indexOf(`\n${h}\n`))
+    expect(positions.every(p => p > 0)).toBe(true)
+    expect([...positions].sort((a, b) => a - b)).toEqual(positions)
+    expect(text).toContain(SPEC_ROLES.domain.responsibility)
+    expect(text).toContain('status: draft')
+    expect(text).toContain(PRD_TEXT)
+    expect(text).toContain(SPEC_TEMPLATES['RULES.md'])
+    expect(SPEC_TEMPLATES['RULES.md']).toContain('## Segurança')
+    expect(SPEC_TEMPLATES['PRD.md']).toContain('## Não objetivos')
+    expect(SPEC_TEMPLATES['GLOSSARY.md']).toMatch(/termo/i)
+    expect(Object.keys(SPEC_TEMPLATES)).toHaveLength(15)
+    expect(text).toContain('ver também ARCHITECTURE.md, TECH_STACK.md, SECURITY.md, TESTS_SPEC.md')
+    expect(text).toMatch(/```yaml\n---\ntitle: "<…>"\npurpose: "<…>"\nversion: 1\nstatus: draft\nowner: domain\n---\n```/)
+    expect(text).toContain('specs/RULES.md')
+    expect(text).toContain('scrum_spec_review_brief')
+  })
+
+  it('shows the current version (and its contract reasons when invalid), the previous review, and caps long texts', () => {
+    const long = 'x'.repeat(BRIEF_SPEC_LIMIT + 1)
+    const text = formatSpecBrief({
+      ...base,
+      predecessors: [{ file: 'PRD.md', version: 2, digest: 'a1b2c3d4', text: long }],
+      current: { state: 'invalid', version: 3, reasons: ['owner mismatch: RULES.md is owned by domain (got product)'], text: 'R1 — a' },
+      previousReview: { state: 'needs-revision', reasons: ['review verdict is needs-revision'], round: 2, body: 'H1 — R2 is not testable.' },
+      nextVersion: 4,
+    })
+    expect(text).toContain('### specs/PRD.md (version 2, digest a1b2c3d4) — omitted (' + (BRIEF_SPEC_LIMIT + 1) + ' chars > ' + BRIEF_SPEC_LIMIT + '): read specs/PRD.md directly')
+    expect(text).not.toContain(long)
+    expect(text).toContain('## Current version — invalid (v3)')
+    expect(text).toContain('owner mismatch: RULES.md is owned by domain (got product)')
+    expect(text).toContain('keep the ids stable; bump version to 4')
+    expect(text).toContain('## Previous review — needs-revision (round 2)')
+    expect(text).toContain('H1 — R2 is not testable.')
+    expect(text).toContain('version: 4')
+  })
+})
+
+describe('formatSpecReviewBrief (comp-60 R7)', () => {
+  const data: SpecReviewBriefData = {
+    file: 'RULES.md', entry: { file: 'RULES.md', owner: 'domain', purpose: 'Invariant rules.', minimal: true },
+    spec: { version: 3, status: 'draft', digest: '9f8e7d6c', ids: ['R1', 'R2'], text: '---\n…\n---\nR1 — a\nR2 — b' },
+    predecessors: [{ file: 'PRD.md', version: 2, digest: 'a1b2c3d4', text: PRD_TEXT }],
+    previousReview: { state: 'stale', reasons: ['review covers version 2 but RULES.md is at version 3'], version: 2, digest: '00000000', round: 1, verdict: 'approved', body: 'Fine.' },
+    round: 2, orderWarnings: ['PRD.md has no review (needs a current review: verdict approved, findings.high 0, covering version 2 and digest a1b2c3d4)'],
+    reviewPath: 'specs/reviews/RULES.review.md', dependents: ['ARCHITECTURE.md'],
+  }
+
+  it('title with version/digest/status, ids, predecessors, previous review, order warnings, owner questions, prefilled frontmatter with a quoted digest', () => {
+    const text = formatSpecReviewBrief(data)
+    expect(text.split('\n')[0]).toBe('# Adversarial review brief — specs/RULES.md (version 3, digest 9f8e7d6c) — status: draft')
+    expect(text).toContain('Ids found: R1, R2')
+    expect(text).toContain('## Previous review — covered version 2, round 1, verdict approved (now stale)')
+    expect(text).toContain('Confirm item by item')
+    expect(text).toContain('## Order warnings')
+    expect(text).toContain('PRD.md has no review')
+    expect(text).toContain('## Guiding questions')
+    expect(text).toMatch(/imperative|testable/)
+    expect(text).toContain('Dependents (impact of a change): ARCHITECTURE.md')
+    expect(text).toContain('save the report as `specs/reviews/RULES.review.md`')
+    expect(text).toMatch(/```yaml\n---\nfile: RULES\.md\nreviewer: <who>\nreviewed_version: 3\nreviewed_digest: "9f8e7d6c"\nverdict: <approved \| needs-revision>\nround: 2\nfindings: \{ high: <n>, medium: <n>, low: <n> \}\n---\n```/)
+    expect(formatSpecReviewBrief({ ...data, orderWarnings: [], previousReview: undefined, round: 1 })).not.toContain('## Order warnings')
   })
 })

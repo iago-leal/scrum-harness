@@ -389,7 +389,7 @@ describe('state.specs (comp-59 R7)', () => {
       writeFileSync(join(ws, 'specs', 'extra.md'), 'x')
       const body = await (await fetch(`${base}/scrum-api/state?workspace=${encodeURIComponent(ws)}`)).json()
       expect(body.state.specs.exists).toBe(true)
-      expect(body.state.specs.summary).toEqual({ minimal: { approved: 1, total: 3 }, present: 1, invalid: 0, unknown: 1, complete: false })
+      expect(body.state.specs.summary).toEqual({ minimal: { approved: 1, total: 3 }, present: 1, invalid: 0, unknown: 1, complete: false, reviewed: 0 })
       expect(body.state.specs.entries[0]).toMatchObject({ file: 'PRD.md', state: 'approved', version: 2, status: 'approved', ids: [], reasons: [] })
       expect(body.state.specs.entries[0].digest).toMatch(/^[0-9a-f]{8}$/)
       expect(JSON.stringify(body.state.specs)).not.toContain('Secret body text')
