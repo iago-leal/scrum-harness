@@ -24,7 +24,9 @@ import mermaid from 'mermaid'
 // fires (async scripts delay it), so the flag must be off before the event,
 // not at the deferred `initialize`. Plain writable property; no DOM, no chunk.
 mermaid.startOnLoad = false
+import DOMPurify from 'dompurify'
 import { act, fetchState } from './api.ts'
+import { configureSanitizer } from './markdown.ts'
 import { createMermaidEngine } from './mermaid-engine.ts'
 import { createScrumStore } from './store.ts'
 import type { ScrumTheme } from './store.ts'
@@ -50,6 +52,14 @@ export const name = 'ui-scrum'
  */
 const engine = createMermaidEngine({ document, mermaid })
 ;(window as unknown as { __scrumMermaid?: unknown }).__scrumMermaid = mermaid
+
+/**
+ * The artifact sanitizer (comp-58 R2): a DEDICATED DOMPurify instance — the
+ * default one belongs to the mermaid engine, which registers global hooks on
+ * it (rel rewriting) — configured once with the policy of markdown.ts and
+ * injected through the same seam as the engine.
+ */
+const sanitize = configureSanitizer(DOMPurify(window))
 
 /** localStorage, or null where it is unavailable (the switch stays in memory). */
 function safeStorage(): StorageLike | null {
@@ -121,6 +131,7 @@ export function apply(ctx: ClientContext): void {
       // inject cache running this factory once per entry × session is exactly
       // right: the engine is a page singleton.
       engine,
+      sanitize,
       side,
       theme,
       runSide,

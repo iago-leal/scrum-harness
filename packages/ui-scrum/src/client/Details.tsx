@@ -7,14 +7,16 @@
  * readiness checklist (the Model's verdict, printed), the four artifacts as
  * editable text with their frontmatter, the phase log, and the outcome of
  * every action rendered inline (the gate refusal never hides behind the
- * overlay). Drafts are local: they re-seed when the selection changes, a
+ * overlay). Since v0.23 (comp-58) each artifact has two modes, Visualizar
+ * (markdown rendered Primer-style through markdown.ts, the mermaid fences
+ * inline) and Escrever (the textarea). Drafts are local: they re-seed when the selection changes, a
  * clean field follows the server (the agent edited through a tool while the
  * form is open) and a dirty one keeps the draft. Every rule lives in
  * `form.ts`; this module only calls it.
  * @module @scrum-harness/ui/client/Details
  */
 
-import { Fragment, useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from 'react'
+import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import type { CSSProperties } from 'react'
 import type { ScrumState, WirePhase, WirePhaseReadiness, WireTaskKind, WireTraceMatrix } from './api.ts'
 import { COMPONENT_FLOW, FEATURE_FLOW } from './api.ts'
@@ -23,6 +25,8 @@ import {
   artifactPatch, checklist, followServer, isDirty, openByDefault, phaseLogLines, phaseSteps, primaryAction,
 } from './form.ts'
 import type { ArtifactField, FormDrafts, FormServer, PhaseStep } from './form.ts'
+import { followMode, frontmatterRows, modeByDefault, renderBody, splitFrontmatter } from './markdown.ts'
+import type { ArtifactMode } from './markdown.ts'
 import { createRenderer, mermaidBlocks, previewByDefault, svgNaturalWidth } from './mermaid.ts'
 import type { Block, BlockState, Renderer, Theme } from './mermaid.ts'
 import type { MermaidEngine } from './mermaid-engine.ts'
@@ -195,6 +199,13 @@ function previewMap(blocks: Record<ArtifactField, Block[]>): Record<ArtifactFiel
 /** The render states of every artifact's blocks, by block index. */
 type BlockStates = Record<ArtifactField, Record<number, BlockState>>
 
+/** The modes seeded from the server texts (comp-58 R1). */
+function modeMap(server: FormServer): Record<ArtifactField, ArtifactMode> {
+  const map = {} as Record<ArtifactField, ArtifactMode>
+  for (const field of ARTIFACT_FIELDS) map[field] = modeByDefault(server.artifacts[field] ?? '')
+  return map
+}
+
 const emptyStates = (): BlockStates => {
   const map = {} as BlockStates
   for (const field of ARTIFACT_FIELDS) map[field] = {}
@@ -208,6 +219,8 @@ export function WorkItemForm(props: {
   onClose: () => void
   /** The page's mermaid engine (comp-44 R7); the form renders through it. */
   engine: MermaidEngine
+  /** The artifact sanitizer (comp-58 R2): the dedicated DOMPurify instance, configured in index.ts. */
+  sanitize: (html: string) => string
   /** The panel theme (comp-44 R6c): a change repaints every diagram. */
   theme: Theme
   /** The title ceilings from the Model (comp-53 R6a); absent on an old server → no counter. */
@@ -234,6 +247,13 @@ export function WorkItemForm(props: {
   const blocks = blocksOf(drafts)
   const [preview, setPreview] = useState<Record<ArtifactField, boolean>>(() => previewMap(blocks))
   const touchedRef = useRef(new Set<ArtifactField>())
+  // comp-58 R1: the mode of each artifact and the tabs the user touched — a
+  // set of its own (r3-L6): the Mostrar/Ocultar toggle must not pin the mode.
+  const [mode, setMode] = useState<Record<ArtifactField, ArtifactMode>>(() => modeMap(server))
+  const modeTouchedRef = useRef(new Set<ArtifactField>())
+  /** The drafts as of the last render — read by the poll effect without entering its deps. */
+  const draftsRef = useRef(drafts)
+  draftsRef.current = drafts
   const hadBlocksRef = useRef<Record<ArtifactField, boolean>>(
     Object.fromEntries(ARTIFACT_FIELDS.map(f => [f, blocks[f].length > 0])) as Record<ArtifactField, boolean>,
   )
@@ -275,11 +295,30 @@ export function WorkItemForm(props: {
       const fresh = blocksOf(seeded)
       setPreview(previewMap(fresh))
       for (const field of ARTIFACT_FIELDS) hadBlocksRef.current[field] = fresh[field].length > 0
+      // comp-58 R1: modes re-seed with the selection.
+      modeTouchedRef.current.clear()
+      setMode(modeMap(next))
       return
     }
     const prev = serverRef.current
     serverRef.current = next
-    setDrafts(current => followAll(current, prev, next))
+    // comp-58 R1: an untouched, clean artifact that just gained its text on the
+    // server (the review a subagent wrote while the form was open) opens in
+    // Visualizar; `dirty` reads the current draft against the PREVIOUS server.
+    const current = draftsRef.current
+    setMode(m => {
+      const merged = { ...m }
+      for (const field of ARTIFACT_FIELDS) {
+        merged[field] = followMode(m[field], {
+          touched: modeTouchedRef.current.has(field),
+          dirty: current.artifacts[field] !== (prev.artifacts[field] ?? ''),
+          prevText: prev.artifacts[field] ?? '',
+          nextText: next.artifacts[field] ?? '',
+        })
+      }
+      return merged
+    })
+    setDrafts(d => followAll(d, prev, next))
     if (phaseRef.current !== node.phase) {
       phaseRef.current = node.phase
       // Untouched fields only (r3-M1): a toggle the user set survives the phase re-seed.
@@ -307,20 +346,24 @@ export function WorkItemForm(props: {
 
   // comp-44 R4: debounced repaint of every previewed artifact; the renderer
   // itself skips blocks whose text and theme did not change. `theme` in the
-  // deps is what makes a theme flip repaint (R6c).
-  const artifactsKey = ARTIFACT_FIELDS.map(f => (preview[f] ? drafts.artifacts[f] : '')).join('\u0000')
+  // deps is what makes a theme flip repaint (R6c). Since comp-58 (R4) an
+  // artifact in Visualizar paints regardless of the Mostrar/Ocultar toggle,
+  // and the mode is in the deps so a switch calls `update` at once (a no-op
+  // for unchanged code: the states survive the switch).
+  const painted = (field: ArtifactField): boolean => mode[field] === 'view' || preview[field]
+  const artifactsKey = ARTIFACT_FIELDS.map(f => (painted(f) ? drafts.artifacts[f] : '')).join('\u0000')
   useEffect(() => {
     const renderers = renderersRef.current
     if (renderers === null) return
     const timer = setTimeout(() => {
       for (const field of ARTIFACT_FIELDS) {
-        if (preview[field]) renderers[field].update(blocks[field], theme)
+        if (painted(field)) renderers[field].update(blocks[field], theme)
         else renderers[field].update([], theme)
       }
     }, PREVIEW_DEBOUNCE_MS)
     return () => { clearTimeout(timer) }
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- artifactsKey stands for the previewed drafts
-  }, [artifactsKey, theme, preview])
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- artifactsKey stands for the painted drafts
+  }, [artifactsKey, theme, preview, mode])
 
   useEffect(() => {
     mountedRef.current = true
@@ -587,6 +630,12 @@ export function WorkItemForm(props: {
               setPreview(current => ({ ...current, [field]: !current[field] }))
             }}
             onRetry={(field) => { renderersRef.current?.[field].retry() }}
+            mode={mode}
+            onMode={(field, value) => {
+              modeTouchedRef.current.add(field)
+              setMode(current => ({ ...current, [field]: value }))
+            }}
+            sanitize={props.sanitize}
           />
         )}
 
@@ -673,12 +722,14 @@ function SpiralSection(props: {
 }
 
 /**
- * The four artifacts as collapsible editable text (comp-43 R4); since v0.20
- * (comp-44 R2) an artifact with ```mermaid fences also carries, BETWEEN the
- * summary and the textarea, the `Diagramas · N` faixa and — when on — the
- * rendered diagrams. The textarea never leaves the screen: the preview is a
- * reading aid over the draft, and the frontmatter the gates read stays
- * editable underneath it.
+ * The four artifacts as collapsible text (comp-43 R4), each in one of two
+ * modes since v0.23 (comp-58 R1): Visualizar — the draft rendered as
+ * markdown (ArtifactView) — or Escrever — the textarea and, for an artifact
+ * with ```mermaid fences (comp-44 R2), the `Diagramas · N` faixa and the
+ * rendered diagrams between the summary and the textarea. The textarea is
+ * the only writer of the draft and stays mounted in both modes (`hidden`
+ * in Visualizar: undo and resize survive); the frontmatter the gates read
+ * stays editable in Escrever.
  */
 function ArtifactsSection(props: {
   drafts: FormDrafts
@@ -692,6 +743,9 @@ function ArtifactsSection(props: {
   unavailable: Partial<Record<ArtifactField, string>>
   onTogglePreview: (field: ArtifactField) => void
   onRetry: (field: ArtifactField) => void
+  mode: Record<ArtifactField, ArtifactMode>
+  onMode: (field: ArtifactField, mode: ArtifactMode) => void
+  sanitize: (html: string) => string
 }) {
   return (
     <div className="scrum-artifacts">
@@ -701,6 +755,8 @@ function ArtifactsSection(props: {
         const dirty = draft !== (props.server.artifacts[field] ?? '')
         const size = draft === '' ? 'vazio' : `${draft.split('\n').length} linhas`
         const blocks = props.blocks[field]
+        const viewing = props.mode[field] === 'view'
+        const panelId = `scrum-artifact-${field}`
         return (
           <details
             key={field}
@@ -713,7 +769,19 @@ function ArtifactsSection(props: {
               <span className="scrum-artifact-size">· {size}</span>
               {dirty && <span className="scrum-artifact-dirty" title="Rascunho não salvo">•</span>}
             </summary>
-            {blocks.length > 0 && (
+            <ArtifactTabs field={field} mode={props.mode[field]} panelId={panelId} onMode={(value) => { props.onMode(field, value) }} />
+            {viewing && props.open[field] && (
+              <ArtifactView
+                panelId={panelId}
+                text={draft}
+                blocks={blocks}
+                states={props.states[field]}
+                unavailable={props.unavailable[field]}
+                sanitize={props.sanitize}
+                onRetry={() => { props.onRetry(field) }}
+              />
+            )}
+            {!viewing && blocks.length > 0 && (
               <DiagramsBar
                 count={blocks.length}
                 dirty={dirty}
@@ -723,12 +791,14 @@ function ArtifactsSection(props: {
                 onRetry={() => { props.onRetry(field) }}
               />
             )}
-            {blocks.length > 0 && props.preview[field] && props.unavailable[field] === undefined && (
+            {!viewing && blocks.length > 0 && props.preview[field] && props.unavailable[field] === undefined && (
               <DiagramList blocks={blocks} states={props.states[field]} />
             )}
             <textarea
+              id={viewing ? undefined : panelId}
               rows={14}
               spellCheck={false}
+              hidden={viewing}
               placeholder={ARTIFACT_PLACEHOLDERS[field]}
               value={draft}
               onChange={(e) => { props.onChange(field, e.target.value) }}
@@ -736,6 +806,114 @@ function ArtifactsSection(props: {
           </details>
         )
       })}
+    </div>
+  )
+}
+
+/** The two modes, in tab order (R1). */
+const MODES: { mode: ArtifactMode; label: string }[] = [
+  { mode: 'view', label: 'Visualizar' },
+  { mode: 'write', label: 'Escrever' },
+]
+
+/**
+ * The Visualizar | Escrever pair of one artifact (comp-58 R1), Write/Preview
+ * style: a tablist with the two tabs, ←/→ switching, the pressed tab owning
+ * the panel below (the rendered view or the textarea).
+ */
+function ArtifactTabs(props: { field: ArtifactField; mode: ArtifactMode; panelId: string; onMode: (mode: ArtifactMode) => void }) {
+  const onKey = (e: React.KeyboardEvent<HTMLDivElement>) => {
+    if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return
+    e.preventDefault()
+    const next = props.mode === 'view' ? 'write' : 'view'
+    props.onMode(next)
+    const tab = e.currentTarget.querySelector<HTMLButtonElement>(`[data-mode="${next}"]`)
+    tab?.focus()
+  }
+  return (
+    <div className="scrum-artifact-tabs" role="tablist" aria-label={`${ARTIFACT_LABELS[props.field]}: modo`} onKeyDown={onKey}>
+      {MODES.map(({ mode, label }) => (
+        <button
+          key={mode}
+          type="button"
+          role="tab"
+          id={`${props.panelId}-tab-${mode}`}
+          data-mode={mode}
+          aria-selected={props.mode === mode}
+          aria-controls={props.panelId}
+          tabIndex={props.mode === mode ? 0 : -1}
+          onClick={() => { props.onMode(mode) }}
+        >{label}</button>
+      ))}
+    </div>
+  )
+}
+
+/**
+ * The rendered artifact (comp-58 R2/R3/R4): the frontmatter as a literal
+ * table (React, never innerHTML) or the "not recognized" notice, then the
+ * body as segments — html groups the dedicated DOMPurify instance sanitized
+ * (this is one of the panel's two dangerouslySetInnerHTML; the other is the
+ * mermaid svg of DiagramFigure — the policy lives in markdown.ts
+ * `configureSanitizer`), interleaved with the mermaid figures carrying the
+ * very Block the Escrever mode renders (same index, same state). Memoized
+ * by the draft text: four instances, one cache each; a closed or
+ * Escrever artifact does not mount this at all.
+ */
+function ArtifactView(props: {
+  panelId: string
+  text: string
+  blocks: Block[]
+  states: Record<number, BlockState>
+  unavailable: string | undefined
+  sanitize: (html: string) => string
+  onRetry: () => void
+}) {
+  const { text, sanitize } = props
+  const split = useMemo(() => splitFrontmatter(text), [text])
+  const rows = useMemo(() => (split.frontmatter === null ? [] : frontmatterRows(split.frontmatter)), [split])
+  // `blocks` derives from `text` (blocksOf), so the text is the whole key.
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- blocks is a function of text
+  const segments = useMemo(() => renderBody(text, { sanitize, blocks: props.blocks }), [text, sanitize])
+  return (
+    <div className="scrum-md" id={props.panelId} role="tabpanel">
+      {split.unrecognized && (
+        <p className="scrum-md-notice">frontmatter não reconhecido (espaço após <code>---</code>? CRLF? sem fechamento?) — o gate diria o mesmo</p>
+      )}
+      {split.frontmatter !== null && <FrontmatterTable rows={rows} />}
+      {segments.map((segment, index) => segment.kind === 'html'
+        ? <div key={index} className="scrum-md-html" dangerouslySetInnerHTML={{ __html: segment.html }} />
+        : (
+          <DiagramFigure
+            key={`m${segment.block.index}`}
+            block={segment.block}
+            state={props.states[segment.block.index]}
+            unavailable={props.unavailable}
+            onRetry={props.onRetry}
+          />
+        ))}
+    </div>
+  )
+}
+
+/** The frontmatter as GitHub shows it (comp-58 R3): a literal key | value table, never judged. */
+function FrontmatterTable(props: { rows: { key: string; value: string; block: string[] }[] }) {
+  return (
+    <div className="scrum-md-fm">
+      <table title="Tabela literal do frontmatter — quem valida é o gate">
+        <thead><tr><th>chave</th><th>valor</th></tr></thead>
+        <tbody>
+          {props.rows.map((row, index) => (
+            <tr key={index}>
+              <td><code>{row.key}</code></td>
+              <td>
+                {row.value}
+                {row.block.length > 0 && <pre>{row.block.join('\n')}</pre>}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
     </div>
   )
 }
@@ -775,38 +953,51 @@ function DiagramsBar(props: {
   )
 }
 
-/**
- * The rendered diagrams of one artifact, in document order (comp-44 R2/R5):
- * one figure per block, its caption `#n · kind`, and the body by state —
- * loading, the svg, or the engine's literal error beside intact siblings.
- * The svg is a string mermaid produced under `securityLevel: 'strict'`
- * (labels sanitized); this is the panel's only dangerouslySetInnerHTML and
- * it is scoped to that contract. The svg sits at its natural width (R9,
- * `svgNaturalWidth` from the viewBox — mermaid's own `width="100%"` would
- * shrink a wide diagram to the form) inside the two-axis scroll container.
- */
+/** The rendered diagrams of one artifact in Escrever, in document order (comp-44 R2/R5): one figure per block. */
 function DiagramList(props: { blocks: Block[]; states: Record<number, BlockState> }) {
   return (
     <div className="scrum-diagrams">
-      {props.blocks.map((block) => {
-        const state = props.states[block.index]
-        const width = state?.kind === 'ready' ? svgNaturalWidth(state.svg) : null
-        return (
-          <figure key={block.index} className={`scrum-diagram is-${state?.kind ?? 'idle'}`}>
-            <figcaption>#{block.index + 1} · {block.kind || '(vazio)'}</figcaption>
-            {state === undefined || state.kind === 'loading'
-              ? <div className="scrum-diagram-loading scrum-muted">Renderizando…</div>
-              : state.kind === 'ready'
-                ? (
-                  <div className="scrum-diagram-svg">
-                    <div className="scrum-diagram-natural" style={width === null ? undefined : { width }} dangerouslySetInnerHTML={{ __html: state.svg }} />
-                  </div>
-                )
-                : <pre className="scrum-diagram-error">{state.message}</pre>}
-          </figure>
-        )
-      })}
+      {props.blocks.map((block) => <DiagramFigure key={block.index} block={block} state={props.states[block.index]} />)}
     </div>
+  )
+}
+
+/**
+ * One diagram (comp-44 R2/R5, shared by DiagramList and ArtifactView since
+ * comp-58): the caption `#n · kind` and the body by state — loading, the
+ * svg, or the engine's literal error beside intact siblings; with
+ * `unavailable` set (Visualizar has no faixa to say it) the body is the
+ * notice with its retry (R4). The svg is a string mermaid produced under
+ * `securityLevel: 'strict'` (labels sanitized); this is one of the panel's
+ * two dangerouslySetInnerHTML (the other is ArtifactView's html segment)
+ * and it is scoped to that contract. The svg sits at its natural width
+ * (R9, `svgNaturalWidth` from the viewBox — mermaid's own `width="100%"`
+ * would shrink a wide diagram to the form) inside the two-axis scroll
+ * container.
+ */
+function DiagramFigure(props: { block: Block; state: BlockState | undefined; unavailable?: string; onRetry?: () => void }) {
+  const { block, state } = props
+  const width = state?.kind === 'ready' ? svgNaturalWidth(state.svg) : null
+  return (
+    <figure className={`scrum-diagram is-${props.unavailable !== undefined ? 'unavailable' : state?.kind ?? 'idle'}`}>
+      <figcaption>#{block.index + 1} · {block.kind || '(vazio)'}</figcaption>
+      {props.unavailable !== undefined
+        ? (
+          <div className="scrum-diagram-unavailable">
+            <span className="scrum-diagrams-unavailable">Diagramas indisponíveis: {props.unavailable}</span>
+            {props.onRetry !== undefined && <button type="button" className="scrum-btn" onClick={props.onRetry}>tentar de novo</button>}
+          </div>
+        )
+        : state === undefined || state.kind === 'loading'
+          ? <div className="scrum-diagram-loading scrum-muted">Renderizando…</div>
+          : state.kind === 'ready'
+            ? (
+              <div className="scrum-diagram-svg">
+                <div className="scrum-diagram-natural" style={width === null ? undefined : { width }} dangerouslySetInnerHTML={{ __html: state.svg }} />
+              </div>
+            )
+            : <pre className="scrum-diagram-error">{state.message}</pre>}
+    </figure>
   )
 }
 

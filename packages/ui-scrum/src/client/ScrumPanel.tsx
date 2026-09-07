@@ -45,6 +45,8 @@ export interface ScrumViewInjected {
   run: (action: Record<string, unknown>, workspace: string | null) => Promise<RunOutcome>
   /** The page's mermaid engine (comp-44 R7): built once in index.ts, rendered by the work item form. */
   engine: MermaidEngine
+  /** The artifact sanitizer (comp-58 R2): the dedicated DOMPurify instance's sanitize, configured in index.ts. */
+  sanitize: (html: string) => string
   /** The side-column switch (comp-55 R1): page-level, transient. */
   side: Switch<SideState>
   /** The color theme (comp-55 R3): page-level, persisted. */
@@ -229,6 +231,7 @@ export function ScrumPanel(props: ScrumPanelProps) {
             run={run}
             onClose={() => { props.actions.setSelected(null) }}
             engine={props.engine}
+            sanitize={props.sanitize}
             theme={theme}
             limits={data?.limits}
             placement={props.placement}

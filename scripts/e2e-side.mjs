@@ -217,6 +217,106 @@ await sleep(200)
 await page.keyboard.press('Escape')
 await sleep(300)
 
+// (G) comp-58 — artifacts rendered as Primer markdown: Visualizar | Escrever
+// per artifact, the frontmatter as a table, mermaid inline, the sanitizer
+// policy probed with raw html (never saved: the dialog is accepted on Esc).
+// The component: the first one whose row carries a phase chip (a component
+// with artifacts), preferring comp-58 (its validation is empty → Escrever).
+{
+  const compRow = (id) => page.locator('.is-side .scrum-bl-row', { has: page.locator('.scrum-id', { hasText: id }) }).first()
+  let target = compRow('comp-58')
+  if ((await target.count()) === 0) target = page.locator('.is-side .scrum-bl-row', { has: page.locator('.scrum-phase') }).first()
+  const hasTarget = (await target.count()) > 0
+  check('G', 'há um componente com artefatos no quadro', hasTarget)
+  if (hasTarget) {
+    const requests = []
+    const onReq = req => { if (req.url().includes('example.invalid')) requests.push(req.url()) }
+    page.on('request', onReq)
+    await target.locator('.scrum-bl-title').click({ force: true })
+    await sleep(800)
+    const artifact = (label) => page.locator('.scrum-artifact', { has: page.locator('summary > span:first-child', { hasText: new RegExp('^' + label + '$') }) })
+    const selectedOf = async (label) => artifact(label).locator('.scrum-artifact-tabs [role=tab][aria-selected=true]').evaluate(el => el.textContent)
+    const openArtifact = async (label) => { const d = artifact(label); if (!(await d.evaluate(el => el.open))) { await d.locator('summary').click(); await sleep(300) } }
+    const labels = ['Requisitos', 'Revisão dos requisitos', 'Desenho', 'Validação']
+    const sizes = await Promise.all(labels.map(l => artifact(l).locator('.scrum-artifact-size').innerText()))
+    const filled = labels.filter((_, i) => !sizes[i].includes('vazio'))
+    const empty = labels.filter((_, i) => sizes[i].includes('vazio'))
+    const modes = await Promise.all(labels.map(selectedOf))
+    check('G', 'Visualizar por padrão nos artefatos com texto', filled.every(l => modes[labels.indexOf(l)] === 'Visualizar'), JSON.stringify(Object.fromEntries(labels.map((l, i) => [l, modes[i]]))))
+    check('G', 'artefato vazio abre em Escrever', empty.length === 0 || empty.every(l => modes[labels.indexOf(l)] === 'Escrever'), empty.join(', ') || '(nenhum vazio)')
+    for (const l of filled) await openArtifact(l)
+    await sleep(1500)
+    const first = filled[0]
+    const md = artifact(first).locator('.scrum-md')
+    check('G', 'frontmatter como tabela (chave | valor), sem o texto literal ---', (await md.locator('.scrum-md-fm table tr').count()) >= 2 && !(await md.locator('.scrum-md-html').allInnerTexts()).join('').includes('\n---\n'))
+    check('G', 'títulos renderizados (h2/h3) no corpo', (await md.locator('.scrum-md-html h2, .scrum-md-html h3').count()) >= 1)
+    check('G', 'textarea oculto em Visualizar', (await artifact(first).locator('textarea').isVisible()) === false)
+    const withFigures = artifact('Desenho')
+    if ((await withFigures.count()) > 0 && filled.includes('Desenho')) {
+      const figs = await withFigures.locator('.scrum-md figure').count()
+      const svgs = await withFigures.locator('.scrum-md figure svg').count()
+      const order = await withFigures.locator('.scrum-md > *').evaluateAll(els => els.map(e => e.tagName === 'FIGURE' ? 'F' : e.classList.contains('scrum-md-html') ? 'H' : 'x').join(''))
+      // order reads like xHFHFH: x = the frontmatter table, H = html segment, F = figure.
+      check('G', 'diagramas inline entre segmentos de html', figs >= 1 && svgs >= 1 && /HF+H/.test(order), `figures=${figs} svg=${svgs} order=${order}`)
+    }
+    await page.screenshot({ path: join(SHOTS, 'G-view.png') })
+    // Escrever → the textarea, intact; edit a heading → Visualizar shows it and the • lights.
+    await artifact(first).locator('[role=tab]', { hasText: 'Escrever' }).click()
+    await sleep(200)
+    const ta = artifact(first).locator('textarea')
+    check('G', '«Escrever» → textarea visível', await ta.isVisible())
+    const original = await ta.inputValue()
+    check('G', 'texto intacto no textarea', original.startsWith('---'))
+    await ta.evaluate((el, v) => { const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set; setter.call(el, v); el.dispatchEvent(new Event('input', { bubbles: true })) }, original + '\n\n## Título de dogfood G\n')
+    await sleep(200)
+    await artifact(first).locator('[role=tab]', { hasText: 'Visualizar' }).click()
+    await sleep(500)
+    check('G', 'título editado renderizado e • aceso', (await artifact(first).locator('.scrum-md-html h2', { hasText: 'Título de dogfood G' }).count()) === 1 && (await artifact(first).locator('.scrum-artifact-dirty').count()) === 1)
+    // Sanitizer probe as its own block (blank line before → a block html token).
+    const probe = '\n\n<script>window.__x=1</script>\n<img src="https://example.invalid/p.gif" onerror="window.__x=2">\n<svg><image href="https://example.invalid/s.png"/></svg>\n<a href="javascript:alert(1)">j</a>\n<a href="//example.invalid/x">p</a>\n<a href="https://example.com">e</a>\n<div class="scrum-wi-overlay"></div>\n<style>body{display:none}</style>\n'
+    await artifact(first).locator('[role=tab]', { hasText: 'Escrever' }).click()
+    await sleep(200)
+    await ta.evaluate((el, v) => { const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set; setter.call(el, v); el.dispatchEvent(new Event('input', { bubbles: true })) }, original + probe)
+    await sleep(200)
+    await artifact(first).locator('[role=tab]', { hasText: 'Visualizar' }).click()
+    await sleep(800)
+    const probeState = await page.evaluate(() => ({
+      x: window.__x,
+      // Only the html segments: the mermaid svg of a figure legitimately carries its own <style>.
+      scriptStyleSvg: document.querySelectorAll('.scrum-md-html script, .scrum-md-html style, .scrum-md-html svg').length,
+      classed: document.querySelectorAll('.scrum-md-html [class]').length,
+      js: document.querySelectorAll('.scrum-md a[href^="javascript:"]').length,
+      rel: document.querySelectorAll('.scrum-md a[href^="//"]').length,
+      ok: [...document.querySelectorAll('.scrum-md a[href="https://example.com"]')].map(a => [a.target, a.rel]),
+      bodyVisible: getComputedStyle(document.body).display !== 'none',
+      alt: document.querySelectorAll('.scrum-md-html span[title^="imagem remota"]').length,
+    }))
+    check('G', 'sonda: nada executa, nada de script/style/svg/class/javascript:/protocol-relative', probeState.x === undefined && probeState.scriptStyleSvg === 0 && probeState.classed === 0 && probeState.js === 0 && probeState.rel === 0 && probeState.bodyVisible, JSON.stringify(probeState))
+    check('G', 'sonda: https → target _blank + rel noopener noreferrer (o hook correu); img remota → [alt]', probeState.ok.length === 1 && probeState.ok[0][0] === '_blank' && /noopener/.test(probeState.ok[0][1]) && /noreferrer/.test(probeState.ok[0][1]) && probeState.alt === 1, JSON.stringify(probeState.ok))
+    await sleep(500)
+    check('G', 'sonda: nenhuma requisição para example.invalid', requests.length === 0, requests.join(' '))
+    page.off('request', onReq)
+    await page.screenshot({ path: join(SHOTS, 'G-probe.png') })
+    // Dark theme: the sheet follows the tokens (no dark rule of its own).
+    // --bgColor-default differs per theme (--bgColor-neutral-muted is the same alpha in both).
+    const preColor = async () => md.evaluate(el => getComputedStyle(el).backgroundColor)
+    const light = await preColor()
+    // The form is modal (overlay over the column): the theme button is reached by a DOM click.
+    await page.locator('.is-side .scrum-tab[title="Tema escuro"]').evaluate(el => el.click())
+    await sleep(300)
+    const dark = await preColor()
+    check('G', '🌙 escurece a folha .scrum-md pelos tokens', light !== dark, `${light} → ${dark}`)
+    await page.screenshot({ path: join(SHOTS, 'G-dark.png') })
+    await page.locator('.is-side .scrum-tab[title="Tema claro"]').evaluate(el => el.click())
+    await sleep(200)
+    // Discard: nothing of block G persists.
+    page.once('dialog', d => d.accept())
+    await page.keyboard.press('Escape')
+    await sleep(400)
+    check('G', 'descartado sem salvar (form fechado)', (await page.locator('.scrum-wi-overlay').count()) === 0)
+  }
+}
+
 // (8) poll: open → one /scrum-api/state per ~4s; closed → none.
 stateCalls.length = 0
 await sleep(8500)

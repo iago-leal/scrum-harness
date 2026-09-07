@@ -70,7 +70,7 @@ export interface Renderer {
 }
 
 /** The opening fence of the declared subset: at line start, exactly three backticks, `mermaid`, trailing spaces tolerated. */
-const OPEN = /^```mermaid\s*$/
+export const OPEN = /^```mermaid\s*$/
 
 /**
  * Extract the mermaid fences of a text with the R3 grammar (the declared

@@ -435,6 +435,92 @@ button.scrum-chev:hover { background: var(--bgColor-neutral-muted, rgba(70, 90, 
   background: var(--bgColor-danger-muted, #ffebe9); color: var(--fgColor-danger, #d1242f);
 }
 .scrum-diagram.is-error { border-color: var(--borderColor-danger-muted, #ff818266); }
+.scrum-diagram-unavailable { display: flex; align-items: center; gap: 8px; padding: 8px; font-size: 12px; flex-wrap: wrap; }
+
+/* ---- comp-58: Visualizar | Escrever and the rendered artifact ----
+   The tabs live OUTSIDE .scrum-md (raw html can carry role/aria-*; the e2e
+   selects them by this class). The textarea stays mounted in Visualizar with
+   the hidden attribute — the display: block above would win over the UA's
+   [hidden], so the attribute gets its own rule (R1). */
+.scrum-artifact-tabs {
+  display: flex; gap: 2px; padding: 4px 10px 0;
+  background: var(--bgColor-muted, #f6f8fa); border-bottom: 1px solid var(--borderColor-default, #d0d7de);
+}
+.scrum-artifact-tabs [role="tab"] {
+  border: 1px solid transparent; border-bottom: none; background: transparent; cursor: pointer;
+  padding: 4px 10px; font-size: 12px; color: var(--fgColor-muted, #59636e);
+  border-radius: var(--borderRadius-medium, 6px) var(--borderRadius-medium, 6px) 0 0; margin-bottom: -1px;
+}
+.scrum-artifact-tabs [role="tab"]:hover { color: var(--fgColor-default, #1d1f24); }
+.scrum-artifact-tabs [role="tab"][aria-selected="true"] {
+  background: var(--bgColor-default, #fff); color: var(--fgColor-default, #1d1f24); font-weight: 600;
+  border-color: var(--borderColor-default, #d0d7de);
+}
+.scrum-artifact-tabs [role="tab"]:focus-visible { outline: 2px solid var(--focus-outlineColor, #9db9f2); outline-offset: -2px; }
+.scrum-artifact textarea[hidden] { display: none; }
+
+/* The rendered artifact (R5): GitHub's .markdown-body, written only on Primer
+   tokens with literal fallbacks and BY ELEMENT — the sanitized html carries no
+   class (R2), and the dark theme comes from the same tokens (no dark rule). */
+.scrum-md {
+  padding: 12px 16px; font-family: var(--fontStack-system, system-ui, sans-serif); font-size: 14px; line-height: 1.5;
+  color: var(--fgColor-default, #1d1f24); background: var(--bgColor-default, #fff);
+  word-wrap: break-word; overflow-wrap: break-word;
+}
+.scrum-md > .scrum-md-html > :first-child { margin-top: 0; }
+.scrum-md > .scrum-md-html > :last-child { margin-bottom: 0; }
+.scrum-md h1, .scrum-md h2, .scrum-md h3, .scrum-md h4, .scrum-md h5, .scrum-md h6 {
+  margin: 24px 0 16px; font-weight: 600; line-height: 1.25;
+}
+.scrum-md h1 { font-size: 2em; padding-bottom: .3em; border-bottom: 1px solid var(--borderColor-muted, #d8dee4); }
+.scrum-md h2 { font-size: 1.5em; padding-bottom: .3em; border-bottom: 1px solid var(--borderColor-muted, #d8dee4); }
+.scrum-md h3 { font-size: 1.25em; }
+.scrum-md h4 { font-size: 1em; }
+.scrum-md h5 { font-size: .875em; }
+.scrum-md h6 { font-size: .85em; color: var(--fgColor-muted, #59636e); }
+.scrum-md p, .scrum-md blockquote, .scrum-md ul, .scrum-md ol, .scrum-md dl, .scrum-md table, .scrum-md pre, .scrum-md details {
+  margin-top: 0; margin-bottom: 16px;
+}
+.scrum-md ul, .scrum-md ol { padding-left: 2em; }
+.scrum-md ul ul, .scrum-md ul ol, .scrum-md ol ol, .scrum-md ol ul { margin-top: 0; margin-bottom: 0; }
+.scrum-md li + li { margin-top: .25em; }
+.scrum-md li > p { margin-top: 16px; }
+.scrum-md li:has(> input[type="checkbox"]) { list-style-type: none; margin-left: -1.5em; }
+.scrum-md input[type="checkbox"] { margin: 0 .4em .25em -.2em; vertical-align: middle; }
+.scrum-md code, .scrum-md tt {
+  padding: .2em .4em; margin: 0; font-size: 85%; white-space: break-spaces;
+  font-family: var(--fontStack-monospace, ui-monospace, monospace);
+  background: var(--bgColor-neutral-muted, rgba(105, 115, 135, 0.12)); border-radius: var(--borderRadius-medium, 6px);
+}
+.scrum-md pre {
+  padding: 16px; overflow: auto; font-size: 85%; line-height: 1.45;
+  font-family: var(--fontStack-monospace, ui-monospace, monospace);
+  background: var(--bgColor-muted, #f6f8fa); border-radius: var(--borderRadius-medium, 6px);
+}
+.scrum-md pre code { padding: 0; margin: 0; font-size: 100%; white-space: pre; background: transparent; border: 0; }
+.scrum-md blockquote {
+  padding: 0 1em; color: var(--fgColor-muted, #59636e);
+  border-left: .25em solid var(--borderColor-default, #d0d7de);
+}
+.scrum-md blockquote > :last-child { margin-bottom: 0; }
+.scrum-md hr { height: 4px; padding: 0; margin: 24px 0; border: 0; background: var(--borderColor-default, #d0d7de); }
+.scrum-md a { color: var(--fgColor-accent, #0969da); text-decoration: none; }
+.scrum-md a:hover { text-decoration: underline; }
+.scrum-md strong { font-weight: 600; }
+.scrum-md img { max-width: 100%; box-sizing: content-box; }
+.scrum-md span[title] { color: var(--fgColor-muted, #59636e); font-style: italic; }
+.scrum-md table { display: block; width: max-content; max-width: 100%; overflow: auto; border-spacing: 0; border-collapse: collapse; }
+.scrum-md table th { font-weight: 600; }
+.scrum-md table th, .scrum-md table td { padding: 6px 13px; border: 1px solid var(--borderColor-default, #d0d7de); }
+.scrum-md table tr { background: var(--bgColor-default, #fff); border-top: 1px solid var(--borderColor-muted, #d8dee4); }
+.scrum-md table tr:nth-child(2n) { background: var(--bgColor-muted, #f6f8fa); }
+.scrum-md table img { background: transparent; }
+.scrum-md-fm { margin-bottom: 16px; overflow-x: auto; }
+.scrum-md-fm table { font-size: 12.5px; }
+.scrum-md-fm td { vertical-align: top; }
+.scrum-md-fm pre { margin: 4px 0 0; padding: 6px 8px; font-size: 100%; }
+.scrum-md-notice { color: var(--fgColor-muted, #59636e); font-style: italic; }
+.scrum-md figure.scrum-diagram { margin: 0 0 16px; }
 .scrum-history-list { margin: 0; padding: 6px 10px 6px 28px; font-size: 12px; font-family: var(--fontStack-monospace, ui-monospace, monospace); }
 .scrum-history-list li { margin: 2px 0; }
 .scrum-history-empty { padding: 6px 10px; }
@@ -635,10 +721,11 @@ button.scrum-chev:hover { background: var(--bgColor-neutral-muted, rgba(70, 90, 
 /* The column can be dragged down to 300px, narrower than the head and the
    grids were drawn for: the head wraps (identical when it fits) and the
    backlog / board keep a floor — below it the body scrolls sideways instead
-   of crushing the Item column to 0px (dogfood at 420). */
+   of crushing the Item column to 0px (dogfood at 420: 760 leaves the Item
+   cell 320px, enough for a task row's indent + icon + kind + id + title). */
 .is-side .scrum-head { flex-wrap: wrap; row-gap: 6px; }
 .is-side .scrum-section-head { flex-wrap: wrap; }
-.is-side .scrum-bl { min-width: 620px; }
+.is-side .scrum-bl { min-width: 760px; }
 .is-side .scrum-board { min-width: 620px; }
 
 /* ---- The «▦ SCRUM» capsule in the session header (comp-55 R6b) ----
