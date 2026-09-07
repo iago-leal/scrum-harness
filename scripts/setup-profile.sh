@@ -48,10 +48,11 @@ cat > "$PROFILE/cordis.patch.yml" <<PATCH
     path: $REAL_DSH_HOME/.credentials.yaml
 PATCH
 
-for pkg in bundle-scrum scrum-domain tool-scrum command-scrum scrum-api ui-scrum; do
+for pkg in bundle-scrum scrum-domain scrum-probe tool-scrum command-scrum scrum-api ui-scrum; do
   case "$pkg" in
     bundle-scrum) name="bundle" ;;
     scrum-domain) name="domain" ;;
+    scrum-probe) name="probe" ;;
     ui-scrum) name="ui" ;;
     *) name="$pkg" ;;
   esac

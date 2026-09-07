@@ -87,7 +87,7 @@ export abstract class ArtifactContract<M> {
         }
         if (path === 'validated_at') return `\`${this.field}\` ${where} must be a quoted ISO-8601 date (bare digits are parsed as a number)`
       }
-      return `\`${this.field}\` ${where} ${describe(issue)}`
+      return `\`${this.field}\` ${where} ${describeIssue(issue)}`
     })
     return { meta: null, issues }
   }
@@ -107,8 +107,12 @@ export abstract class ArtifactContract<M> {
   abstract check(component: Component): ContractResult
 }
 
-/** Turn a zod issue into a short reason fragment. */
-function describe(issue: z.core.$ZodIssue): string {
+/**
+ * Turn a zod issue into a short reason fragment. Exported since v0.24 so the
+ * spec contract (comp-59 R2) can fall back on the family's wording.
+ * @param issue - one zod issue.
+ */
+export function describeIssue(issue: z.core.$ZodIssue): string {
   if (issue.code === 'invalid_type' && issue.message.includes('received undefined')) return 'missing'
   if (issue.code === 'invalid_value') return `must be one of ${(issue as { values: unknown[] }).values.map(String).join(', ')}`
   // Refinement messages are ours: keep their casing.

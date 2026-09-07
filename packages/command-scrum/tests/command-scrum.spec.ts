@@ -87,3 +87,27 @@ describe('title-limit header (comp-53 R5)', () => {
     expect(board.overflowSummary()).toEqual({ titles: 0, goals: 0, limits: { title: 80, goal: 120 } })
   })
 })
+
+// ── comp-59 R7: /scrum tree heads with the Specs line only when specs/ is a directory ──
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+const osTmpdir = tmpdir
+
+describe('/scrum tree and the Specs header (comp-59 R7)', () => {
+  it('prints the line after the board headers only when the workspace has a specs/ directory', async () => {
+    const ws = mkdtempSync(join(osTmpdir(), 'scrum-specs-cmd-'))
+    try {
+      const board = await ctx.scrum.board(ws)
+      await board.createRelease({ name: 'v1.0' })
+      expect((await slash('tree', ws)).text).not.toMatch(/^Specs:/m)
+      mkdirSync(join(ws, 'specs'))
+      writeFileSync(join(ws, 'specs', 'RULES.md'), '---\ntitle: "R"\npurpose: "p"\nversion: 1\nstatus: approved\nowner: domain\n---\nR1 — a')
+      const text = (await slash('tree', ws)).text
+      expect(text.split('\n')[0]).toBe('Specs: 1/3 minimal approved · 1 present')
+      expect(text.split('\n')[2]).toBe('rel-1 v1.0 [planned]')
+      expect((await slash('', ws)).text.split('\n')[0]).toBe('Specs: 1/3 minimal approved · 1 present')
+      expect((await slash('tree', null)).text).not.toMatch(/^Specs:/m)
+    } finally {
+      rmSync(ws, { recursive: true, force: true })
+    }
+  })
+})

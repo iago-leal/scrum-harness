@@ -18,6 +18,8 @@ import {
   formatImpact,
   formatReviewBrief,
   formatShelf,
+  formatSpecStatus,
+  formatSpecsProbeMessage,
   formatSprints,
   formatSprintStatus,
   formatSuiteBudget,
@@ -25,6 +27,8 @@ import {
   formatTree,
   gitignoreNames,
   kindPrefix,
+  SPEC_FILE_CAP,
+  SpecSet,
   TASK_KINDS,
   TRACE_PROBE_CAP,
   withBoardHeader,
@@ -32,7 +36,7 @@ import {
 } from '@scrum-harness/domain'
 // Type-only: resolves ctx.scrum for the inject declaration.
 import type {} from '@scrum-harness/domain'
-import { listWorkspaceFiles, resolveWorkspacePath } from './probe.ts'
+import { listSpecFiles, listWorkspaceFiles, resolveWorkspacePath } from '@scrum-harness/probe'
 
 export const name = 'tool-scrum'
 export const inject = ['tools', 'scrum']
@@ -93,10 +97,32 @@ export function apply(ctx: Context): void {
       const board = await boardOf(exec)
       const sprints = board.sprints()
       const text = `${formatTree(board.tree(), sprints)}\n\nSprints:\n${formatSprints(sprints, board.releaseNames())}`
-      // comp-50 R3 / comp-53 R5: the board's own suite budget and title-overflow count head the view (never on a clean default board).
-      return Promise.resolve({ text: withBoardHeader(board.suiteBudget(), board.overflowSummary(), text) })
+      // comp-50 R3 / comp-53 R5 / comp-59 R7: the board's own suite budget, title-overflow count and spec-set line head the view
+      // (never on a clean default board; the spec line only when the workspace has a specs/ directory — the global board never probes).
+      const cwd = cwdOf(exec)
+      const specs = cwd === undefined ? null : board.specs(listSpecFiles(cwd, SPEC_FILE_CAP))
+      return Promise.resolve({ text: withBoardHeader(board.suiteBudget(), board.overflowSummary(), text, specs) })
     },
     presentCall: () => ({ card: 'generic', title: 'Read SCRUM tree', kind: 'read' }),
+  }))
+
+  ctx.tools.register(defineTool({
+    name: 'scrum_spec_status',
+    description:
+      'The project spec set (SDD, comp-59): what <workspace>/specs/ holds against the catalog of the fifteen canonical files '
+      + '(PRD.md, GLOSSARY.md, RULES.md, ARCHITECTURE.md, TECH_STACK.md, SECURITY.md, API_SPEC.md, DATABASE_SCHEMA.md, UI_UX_SPEC.md, TESTS_SPEC.md, AGENTS.md, WORKFLOW.md, PROMPTS.md, TASKS.md, README.md; '
+      + 'minimal: PRD + RULES + API_SPEC). One line per file: missing | draft | approved | invalid (every contract reason named) | unknown. '
+      + 'A spec file is markdown with a frontmatter on line 1 — title, purpose, version (integer ≥ 1), status: draft | approved (approved is the human stamp), owner (product | domain | architect | api-data | test | agents | ops, the file\'s owner in the catalog) — '
+      + 'and stable ids at line start (R1, S1, P1, C1, CT-001), each declared once. The board never writes specs/.',
+    parameters: {},
+    output: TEXT_OUTPUT,
+    execute(_args, exec) {
+      const cwd = cwdOf(exec)
+      if (cwd === undefined) return Promise.resolve({ text: formatSpecsProbeMessage('no-workspace') })
+      // Environment (the probe) → Model (the set) → View (the lines); no board is opened: the set is stateless.
+      return Promise.resolve({ text: formatSpecStatus(SpecSet.of(listSpecFiles(cwd, SPEC_FILE_CAP))) })
+    },
+    presentCall: () => ({ card: 'generic', title: 'Read spec set status', kind: 'read' }),
   }))
 
   ctx.tools.register(defineTool({

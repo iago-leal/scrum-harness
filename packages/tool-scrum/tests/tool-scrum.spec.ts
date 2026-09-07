@@ -609,27 +609,10 @@ describe('scrum_trace (comp-49 R6)', () => {
     expect(root).not.toMatch(/dist|lib\/|node_modules|hidden|\.gitignore/)
   })
 
-  it('R6: listWorkspaceFiles and resolveWorkspacePath — the probe is environment only', () => {
-    const ignore = new Set(['dist', 'lib'])
-    expect(listWorkspaceFiles(ws, 'src', ignore, 500)).toEqual({ files: ['src/a.ts', 'src/nested/deep.ts', 'src/untraced.ts'], truncated: false })
-    expect(listWorkspaceFiles(ws, 'src/a.ts', ignore, 500)).toEqual({ files: ['src/a.ts'], truncated: false })
-    expect(listWorkspaceFiles(ws, 'src/gone.ts', ignore, 500)).toEqual({ files: [], truncated: false })
-    expect(listWorkspaceFiles(ws, 'nowhere', ignore, 500)).toEqual({ files: [], truncated: false })
-    // Without the ignore names, dist/ and lib/ show up; dot names and node_modules never do.
-    expect(listWorkspaceFiles(ws, '', new Set(), 500).files).toEqual([
-      'README.md', 'debug.log', 'dist/out.js', 'keep', 'lib/l.js', 'src/a.ts', 'src/nested/deep.ts', 'src/untraced.ts', 'tests/a.spec.ts',
-    ])
-    // The cap: a small one proves the flag without 500 files.
-    const capped = listWorkspaceFiles(ws, '', ignore, 3)
-    expect(capped.files).toHaveLength(3)
-    expect(capped.truncated).toBe(true)
-
+  it('R6 (comp-59 R4): the probe moved to @scrum-harness/probe; src/probe.ts stays as a re-export shim so the archived trace still resolves', () => {
+    // The unit tests of both functions live in packages/scrum-probe/tests/probe.spec.ts now; this pins the shim.
+    expect(listWorkspaceFiles(ws, 'src/a.ts', new Set(), 500)).toEqual({ files: ['src/a.ts'], truncated: false })
     expect(resolveWorkspacePath('/w/s', '/w/s/src/a.ts')).toBe('src/a.ts')
-    expect(resolveWorkspacePath('/w/s/', '/w/s')).toBe('')
-    expect(resolveWorkspacePath('/w/s', '/w/s2/a.ts')).toBeNull()
-    expect(resolveWorkspacePath('/w/s', '/w/s/../x.ts')).toBeNull()
-    // Lexical: no realpath on either side (macOS /var → /private/var would otherwise break).
-    expect(resolveWorkspacePath('/var/folders/x', '/var/folders/x/y.ts')).toBe('y.ts')
   })
 
   it('R6: the truncation note rides the directory form when the probe hit its cap', async () => {
@@ -757,5 +740,60 @@ describe('title/description parameter docs (comp-54 R1)', () => {
     expect(doc('scrum_sprint_plan', 'goal')).toBe(goal)
     // Sprints have no description parameter (the reasoning goes to the planning ceremony).
     expect(props('scrum_sprint_plan')['description']).toBeUndefined()
+  })
+})
+
+// ── comp-59: the spec set through the tools (R6, R7) — written before the code ──
+describe('scrum_spec_status and the Specs header (comp-59 R6, R7)', () => {
+  let ws: string
+  beforeEach(() => { ws = mkdtempSync(join(tmpdir(), 'scrum-specs-tool-')) })
+  afterEach(() => { rmSync(ws, { recursive: true, force: true }) })
+
+  const spec = (file: string, owner: string, status = 'draft', body = 'Body.'): string =>
+    `---\ntitle: "${file}"\npurpose: "p"\nversion: 1\nstatus: ${status}\nowner: ${owner}\n---\n${body}`
+
+  it('R6: is registered as a read tool without parameters', () => {
+    const schema = ctx.tools.schemas().find(s => s.name === 'scrum_spec_status')!
+    expect(schema).toBeDefined()
+    expect(schema.description).toMatch(/specs\//)
+    expect(Object.keys((schema.parameters as { properties?: Record<string, unknown> }).properties ?? {})).toEqual([])
+  })
+
+  it('R6: the four headers — no workspace, specs/ not found, not a directory, and a directory with lines', async () => {
+    expect((await run('scrum_spec_status', {}, { cwd: null })).text).toBe('Specs: no workspace — the spec set lives in <workspace>/specs/')
+    expect((await run('scrum_spec_status', {}, { cwd: ws })).text)
+      .toBe('Specs: specs/ not found — the SDD spec set lives in specs/ (minimal: PRD.md, RULES.md, API_SPEC.md; owners in the order of the agents: product → domain → architect → api-data → test → agents → ops)')
+    writeFileSync(join(ws, 'specs'), 'file')
+    expect((await run('scrum_spec_status', {}, { cwd: ws })).text).toBe('Specs: specs is not a directory')
+    rmSync(join(ws, 'specs'))
+    mkdirSync(join(ws, 'specs'))
+    writeFileSync(join(ws, 'specs', 'PRD.md'), spec('PRD.md', 'product', 'approved'))
+    writeFileSync(join(ws, 'specs', 'RULES.md'), spec('RULES.md', 'domain', 'draft', 'R1 — a\nR2 — b'))
+    writeFileSync(join(ws, 'specs', 'API_SPEC.md'), '---\ntitle: "x"\n---\nno version')
+    writeFileSync(join(ws, 'specs', 'notes.md'), 'free')
+    const text = (await run('scrum_spec_status', {}, { cwd: ws })).text
+    const lines = text.split('\n')
+    expect(lines[0]).toBe('Specs: 1/3 minimal approved · 3 present · 1 invalid · 1 unknown')
+    expect(lines[1]).toMatch(/^PRD\.md \[approved v1 · [0-9a-f]{8}\] product · minimal — no ids$/)
+    expect(lines[2]).toBe('GLOSSARY.md [missing] domain')
+    expect(lines[3]).toMatch(/^RULES\.md \[draft v1 · [0-9a-f]{8}\] domain · minimal — 2 ids \(R1, R2\)$/)
+    expect(lines[7]).toBe('API_SPEC.md [invalid] api-data · minimal — purpose missing; version missing; status missing; owner missing')
+    expect(lines[16]).toBe('notes.md [unknown] — not in the catalog')
+    expect(lines).toHaveLength(17)
+  })
+
+  it('R7: scrum_tree heads the view with the Specs line only when specs/ is a directory', async () => {
+    await run('scrum_release_create', { name: 'v1.0' }, { cwd: ws })
+    const without = (await run('scrum_tree', {}, { cwd: ws })).text
+    expect(without).not.toMatch(/^Specs:/m)
+    expect(without.split('\n')[0]).toBe('rel-1 v1.0 [planned]')
+    mkdirSync(join(ws, 'specs'))
+    const empty = (await run('scrum_tree', {}, { cwd: ws })).text
+    expect(empty.split('\n')[0]).toBe('Specs: 0/3 minimal approved')
+    expect(empty.split('\n')[2]).toBe('rel-1 v1.0 [planned]')
+    writeFileSync(join(ws, 'specs', 'PRD.md'), spec('PRD.md', 'product', 'approved'))
+    expect((await run('scrum_tree', {}, { cwd: ws })).text.split('\n')[0]).toBe('Specs: 1/3 minimal approved · 1 present')
+    // The global board never probes a disk.
+    expect((await run('scrum_tree', {}, { cwd: null })).text).not.toMatch(/^Specs:/m)
   })
 })

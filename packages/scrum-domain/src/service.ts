@@ -24,6 +24,8 @@ import { TraceContract, TraceMatrix, matchPath, normalizePath, pathIssue, traceG
 import type { TraceField, TraceGate, TraceMatrixData } from './traces.ts'
 import { TASK_KINDS, splitKindPrefix, taskNumber } from './kind.ts'
 import type { TaskKind } from './kind.ts'
+import { SpecSet } from './specs.ts'
+import type { SpecSetData, SpecsProbe } from './specs.ts'
 import {
   BOARD_COLUMNS,
   COMPONENT_PHASES,
@@ -514,6 +516,16 @@ export class ScrumBoard {
   /** The two title ceilings, as Controllers and the View read them (comp-53 R1/D9). */
   titleLimits(): TitleLimits {
     return TitleContract.limits()
+  }
+
+  /**
+   * The project spec set (comp-59 R5): the classified reading of what a
+   * Controller probed at `<workspace>/specs/`. Stateless — nothing of it is
+   * persisted; the board is only the entry point of callers that hold one.
+   * @param probe - the probe result (`@scrum-harness/probe`).
+   */
+  specs(probe: SpecsProbe): SpecSetData {
+    return SpecSet.of(probe)
   }
 
   /**

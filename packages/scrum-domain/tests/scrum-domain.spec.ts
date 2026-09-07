@@ -1777,3 +1777,17 @@ describe('title contract — legacy read, marked, never rejected (comp-53 R4)', 
     expect(board.overflowSummary()).toEqual({ titles: 0, goals: 0, limits: { title: 80, goal: 120 } })
   })
 })
+
+// ── comp-59 R5: ScrumBoard.specs delegates to SpecSet.of ──
+import { SpecSet } from '../src/specs.ts'
+describe('ScrumBoard.specs (comp-59 R5)', () => {
+  it('returns the same frozen data SpecSet.of builds, without touching the board', async () => {
+    const before = scrum.tree()
+    const set = scrum.specs({ kind: 'dir', files: [{ name: 'PRD.md', size: 5, text: 'plain' }] })
+    expect(set).toEqual(SpecSet.of({ kind: 'dir', files: [{ name: 'PRD.md', size: 5, text: 'plain' }] }))
+    expect(set.entries[0]).toMatchObject({ file: 'PRD.md', state: 'invalid' })
+    expect(Object.isFrozen(set)).toBe(true)
+    expect(scrum.specs({ kind: 'absent' })).toMatchObject({ exists: false, reason: 'absent' })
+    expect(scrum.tree()).toEqual(before)
+  })
+})

@@ -231,8 +231,8 @@ export interface TraceMatrixData {
   issues: string[]
 }
 
-/** Freeze an object graph of plain objects and arrays in place. */
-function deepFreeze<T>(value: T): T {
+/** Freeze an object graph of plain objects and arrays in place (exported since v0.24 for `SpecSet.of`, comp-59 R5). */
+export function deepFreeze<T>(value: T): T {
   if (typeof value === 'object' && value !== null && !Object.isFrozen(value)) {
     Object.freeze(value)
     for (const inner of Object.values(value as Record<string, unknown>)) deepFreeze(inner)

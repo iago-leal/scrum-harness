@@ -15,7 +15,9 @@ import {
   formatTree,
   withBoardHeader,
   ScrumError,
+  SPEC_FILE_CAP,
 } from '@scrum-harness/domain'
+import { listSpecFiles } from '@scrum-harness/probe'
 
 export const name = 'command-scrum'
 export const inject = ['commands', 'scrum']
@@ -50,14 +52,17 @@ export function apply(ctx: Context): void {
       const [verb, argument] = invocation.rawInput.trim().split(/\s+/u, 2)
       // The command answers about the CALLING session's workspace board
       // (sessions without a cwd share the global fallback board).
-      const board = await ctx.scrum.board((invocation.agent as unknown as AgentLike).session.header.cwd)
+      const cwd = (invocation.agent as unknown as AgentLike).session.header.cwd
+      const board = await ctx.scrum.board(cwd)
       try {
         switch (verb ?? '') {
           case '':
           case 'tree': {
             const sprints = board.sprints()
-            // comp-50 R3 / comp-53 R5: the board's own suite budget and title-overflow count head the tree views.
-            const tree = withBoardHeader(board.suiteBudget(), board.overflowSummary(), formatTree(board.tree(), sprints))
+            // comp-50 R3 / comp-53 R5 / comp-59 R7: the board's own suite budget, title-overflow count and spec-set line head the tree views
+            // (the spec line only when the workspace has a specs/ directory; a session without cwd never probes a disk).
+            const specs = cwd === undefined ? null : board.specs(listSpecFiles(cwd, SPEC_FILE_CAP))
+            const tree = withBoardHeader(board.suiteBudget(), board.overflowSummary(), formatTree(board.tree(), sprints), specs)
             if ((verb ?? '') === 'tree') return { kind: 'success', text: tree }
             return { kind: 'success', text: `${tree}\n\nSprints:\n${formatSprints(sprints, board.releaseNames())}` }
           }

@@ -5,6 +5,9 @@
       "path": "packages/scrum-domain"
     },
     {
+      "path": "packages/scrum-probe"
+    },
+    {
       "path": "packages/tool-scrum"
     },
     {

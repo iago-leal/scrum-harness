@@ -10,6 +10,8 @@ import type { Ceremony, Component, Sprint, Task } from './spec.ts'
 import type { ImpactHit, ImpactReport, OverflowSummary, ReviewBriefData, ScrumTree, ShelfLists, SprintStatus, SprintView } from './service.ts'
 import { TRACE_PROBE_CAP } from './traces.ts'
 import type { TraceMatrixData } from './traces.ts'
+import { SPEC_OWNERS, SPEC_UNKNOWN_CAP, SpecCatalog } from './specs.ts'
+import type { SpecEntry, SpecSetData } from './specs.ts'
 
 /** Release-name lookup used to render sprint→release links. */
 export type ReleaseNames = ReadonlyMap<string, string>
@@ -396,7 +398,79 @@ export function formatOverflowHeader(summary: OverflowSummary): string | null {
  * @param text - the rendered view.
  * @returns the view, headed by the lines that apply.
  */
-export function withBoardHeader(budget: SuiteBudget, summary: OverflowSummary, text: string): string {
-  const parts = [formatSuiteBudget(budget, 'header'), formatOverflowHeader(summary)].filter((p): p is string => p !== null)
+export function withBoardHeader(budget: SuiteBudget, summary: OverflowSummary, text: string, specs?: SpecSetData | null): string {
+  const parts = [formatSuiteBudget(budget, 'header'), formatOverflowHeader(summary), specs == null ? null : specsHeader(specs)]
+    .filter((p): p is string => p !== null)
   return parts.length === 0 ? text : `${parts.join('\n')}\n\n${text}`
+}
+
+// ── The spec set (comp-59 R6, R7): the View prints SpecSetData, never consults the catalog for a rule ──
+
+/**
+ * The one-line summary of the spec set: always `a/3 minimal approved`, then
+ * present / invalid / unknown each only when above zero, `complete` last.
+ * @param data - the set.
+ * @returns the line, or null when there is no `specs/` directory (zero noise).
+ */
+export function specsHeader(data: SpecSetData): string | null {
+  if (!data.exists) return null
+  const s = data.summary
+  const parts = [`Specs: ${s.minimal.approved}/${s.minimal.total} minimal approved`]
+  if (s.present > 0) parts.push(`${s.present} present`)
+  if (s.invalid > 0) parts.push(`${s.invalid} invalid`)
+  if (s.unknown > 0) parts.push(`${s.unknown} unknown`)
+  if (s.complete) parts.push('complete')
+  return parts.join(' · ')
+}
+
+/**
+ * The message of `scrum_spec_status` when there is no set to list.
+ * @param reason - why: no session workspace, no `specs/`, or `specs` is not a directory.
+ */
+export function formatSpecsProbeMessage(reason: 'no-workspace' | 'absent' | 'not-a-directory'): string {
+  switch (reason) {
+    case 'no-workspace': return 'Specs: no workspace — the spec set lives in <workspace>/specs/'
+    case 'not-a-directory': return 'Specs: specs is not a directory'
+    case 'absent': {
+      const minimal = SpecCatalog.minimal().map(e => e.file).join(', ')
+      return `Specs: specs/ not found — the SDD spec set lives in specs/ (minimal: ${minimal}; owners in the order of the agents: ${SPEC_OWNERS.join(' → ')})`
+    }
+  }
+}
+
+/** One id-first line of the status view. */
+function specLine(entry: SpecEntry): string {
+  if (entry.state === 'unknown') {
+    return `${entry.file} [unknown] — not in the catalog${entry.caseOf !== undefined ? ` (case: ${entry.caseOf}?)` : ''}`
+  }
+  const who = `${entry.owner ?? ''}${entry.minimal ? ' · minimal' : ''}`
+  if (entry.state === 'missing') return `${entry.file} [missing] ${who}`
+  if (entry.state === 'invalid') return `${entry.file} [invalid] ${who} — ${entry.reasons.join('; ')}`
+  const ids = entry.ids.length === 0
+    ? 'no ids'
+    : entry.ids.length <= 6
+      ? `${entry.ids.length} ids (${entry.ids.join(', ')})`
+      : `${entry.ids.length} ids (${entry.ids[0]} … ${entry.ids[entry.ids.length - 1]})`
+  return `${entry.file} [${entry.state} v${entry.version} · ${entry.digest}] ${who} — ${ids}`
+}
+
+/**
+ * The status view: the header, then one line per entry in the set's order
+ * (catalog, then unknown files capped at {@link SPEC_UNKNOWN_CAP}).
+ * @param data - the set.
+ */
+export function formatSpecStatus(data: SpecSetData): string {
+  if (!data.exists) return formatSpecsProbeMessage(data.reason ?? 'absent')
+  const lines = [specsHeader(data)!]
+  let unknownShown = 0
+  let unknownHidden = 0
+  for (const entry of data.entries) {
+    if (entry.state === 'unknown') {
+      if (unknownShown >= SPEC_UNKNOWN_CAP) { unknownHidden += 1; continue }
+      unknownShown += 1
+    }
+    lines.push(specLine(entry))
+  }
+  if (unknownHidden > 0) lines.push(`  +${unknownHidden} unknown file(s) not shown`)
+  return lines.join('\n')
 }

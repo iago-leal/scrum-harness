@@ -17,7 +17,8 @@ import type { Context } from '@deepseek-ai/cordis'
 import { z } from 'zod'
 // Type-only: resolves ctx.webServer for the inject declaration.
 import type {} from '@deepseek-ai/dsh-host-webserver'
-import { BOARD_COLUMNS, CEREMONY_TYPES, COMPONENT_PHASES, ScrumError, TASK_KINDS } from '@scrum-harness/domain'
+import { BOARD_COLUMNS, CEREMONY_TYPES, COMPONENT_PHASES, ScrumError, SPEC_FILE_CAP, TASK_KINDS } from '@scrum-harness/domain'
+import { listSpecFiles } from '@scrum-harness/probe'
 // Type-only: resolves ctx.scrum.
 import type { ScrumBoard, ShelfLists } from '@scrum-harness/domain'
 
@@ -94,9 +95,16 @@ export function apply(ctx: Context): void {
     }
   })
 
-  /** The whole current state of one board, as one JSON-ready value. */
-  const state = (board: ScrumBoard) => ({
+  /**
+   * The whole current state of one board, as one JSON-ready value. `specs`
+   * (comp-59 R7, accepted by the user): the only place the API reads the
+   * disk — `<workspace>/specs/*.md`, flat, regular files, capped per file,
+   * metadata only (never the text), read errors swallowed by the probe;
+   * null when the request names no workspace.
+   */
+  const state = (board: ScrumBoard, workspace: string | undefined) => ({
     tree: board.tree(),
+    specs: workspace === undefined ? null : board.specs(listSpecFiles(workspace, SPEC_FILE_CAP)),
     sprints: board.sprints(),
     ceremonies: board.ceremonies(),
     activeSprintId: board.activeSprint()?.id ?? null,
@@ -165,7 +173,7 @@ export function apply(ctx: Context): void {
       if (req.method === 'GET' && url.pathname === '/scrum-api/state') {
         const workspace = url.searchParams.get('workspace') ?? undefined
         const board = await ctx.scrum.board(workspace)
-        json(res, 200, { ok: true, state: state(board) })
+        json(res, 200, { ok: true, state: state(board, workspace) })
         return
       }
       if (req.method === 'POST' && url.pathname === '/scrum-api/action') {
@@ -193,7 +201,7 @@ export function apply(ctx: Context): void {
         const board = await ctx.scrum.board(workspace)
         try {
           const result = await dispatch(board, action.data)
-          json(res, 200, { ok: true, result, state: state(board) })
+          json(res, 200, { ok: true, result, state: state(board, workspace) })
         } catch (error) {
           if (error instanceof ScrumError) {
             const status = error.code === 'not-found' ? 404 : 409

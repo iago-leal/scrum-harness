@@ -19,7 +19,8 @@
   ],
   "license": "MIT",
   "dependencies": {
-    "@scrum-harness/domain": "^0.1.0"
+    "@scrum-harness/domain": "^0.1.0",
+    "@scrum-harness/probe": "^0.1.0"
   },
   "peerDependencies": {
     "@deepseek-ai/cordis": "*",

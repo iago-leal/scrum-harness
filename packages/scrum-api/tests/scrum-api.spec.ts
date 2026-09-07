@@ -369,3 +369,39 @@ describe('title contract (comp-53)', () => {
     expect(current.state.sprints[0]).not.toHaveProperty('goalOverflow')
   })
 })
+
+// ── comp-59 R7: `specs` in the state — the API reads <workspace>/specs/*.md (metadata only, never the text) ──
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+const osTmpdir = tmpdir
+
+describe('state.specs (comp-59 R7)', () => {
+  it('null without a workspace; exists:false with a workspace that has no specs/; the full SpecSetData otherwise', async () => {
+    const global = await (await fetch(`${base}/scrum-api/state`)).json()
+    expect(global.state.specs).toBeNull()
+    const noDir = await state()
+    expect(noDir.state.specs).toMatchObject({ exists: false, reason: 'absent', summary: { minimal: { approved: 0, total: 3 }, complete: false } })
+    expect(noDir.state.specs.entries).toHaveLength(15)
+
+    const ws = mkdtempSync(join(osTmpdir(), 'scrum-specs-api-'))
+    try {
+      mkdirSync(join(ws, 'specs'))
+      writeFileSync(join(ws, 'specs', 'PRD.md'), '---\ntitle: "P"\npurpose: "p"\nversion: 2\nstatus: approved\nowner: product\n---\nSecret body text.')
+      writeFileSync(join(ws, 'specs', 'extra.md'), 'x')
+      const body = await (await fetch(`${base}/scrum-api/state?workspace=${encodeURIComponent(ws)}`)).json()
+      expect(body.state.specs.exists).toBe(true)
+      expect(body.state.specs.summary).toEqual({ minimal: { approved: 1, total: 3 }, present: 1, invalid: 0, unknown: 1, complete: false })
+      expect(body.state.specs.entries[0]).toMatchObject({ file: 'PRD.md', state: 'approved', version: 2, status: 'approved', ids: [], reasons: [] })
+      expect(body.state.specs.entries[0].digest).toMatch(/^[0-9a-f]{8}$/)
+      expect(JSON.stringify(body.state.specs)).not.toContain('Secret body text')
+      expect(body.state.specs.entries.at(-1)).toEqual({ file: 'extra.md', minimal: false, state: 'unknown', ids: [], reasons: [] })
+      // The POST answer carries the same field for the same workspace.
+      const posted = await fetch(`${base}/scrum-api/action`, {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ workspace: ws, action: 'createRelease', name: 'v1' }),
+      })
+      expect((await posted.json()).state.specs.summary.present).toBe(1)
+    } finally {
+      rmSync(ws, { recursive: true, force: true })
+    }
+  })
+})

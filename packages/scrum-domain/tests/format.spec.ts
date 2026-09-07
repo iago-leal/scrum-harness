@@ -453,3 +453,93 @@ describe('review brief conventions — the title rule (comp-54 R6)', () => {
     expect(text.indexOf(line)).toBeLessThan(text.indexOf('## Guiding questions'))
   })
 })
+
+// ── comp-59: the spec set on the text surfaces (R6, R7) — written before the code ──
+import { formatSpecStatus, formatSpecsProbeMessage, specsHeader } from '../src/format.ts'
+import { SpecSet } from '../src/specs.ts'
+import type { SpecEntry, SpecSetData } from '../src/specs.ts'
+
+/** A SpecSetData with the given entries/summary overrides (the View never computes; it prints what the Model built). */
+function specSet(entries: SpecEntry[], summary: Partial<SpecSetData['summary']> = {}, exists = true): SpecSetData {
+  return {
+    exists,
+    entries,
+    summary: { minimal: { approved: 0, total: 3 }, present: 0, invalid: 0, unknown: 0, complete: false, ...summary },
+  }
+}
+const missing = (file: string, owner: SpecEntry['owner'], minimal = false): SpecEntry => ({ file, owner, minimal, state: 'missing', ids: [], reasons: [] })
+
+describe('specsHeader / formatSpecStatus (comp-59 R6, R7)', () => {
+  it('specsHeader: always a/3, then present/invalid/unknown only when > 0, complete last; null when the set does not exist', () => {
+    expect(specsHeader(specSet([], {}))).toBe('Specs: 0/3 minimal approved')
+    expect(specsHeader(specSet([], { minimal: { approved: 2, total: 3 }, present: 5, invalid: 1, unknown: 1 })))
+      .toBe('Specs: 2/3 minimal approved · 5 present · 1 invalid · 1 unknown')
+    expect(specsHeader(specSet([], { minimal: { approved: 3, total: 3 }, present: 3, complete: true })))
+      .toBe('Specs: 3/3 minimal approved · 3 present · complete')
+    expect(specsHeader(specSet([], { invalid: 2 }))).toBe('Specs: 0/3 minimal approved · 2 invalid')
+    expect(specsHeader(specSet([], {}, false))).toBeNull()
+    expect(specsHeader(SpecSet.of({ kind: 'absent' }))).toBeNull()
+    expect(specsHeader(SpecSet.of({ kind: 'not-a-directory' }))).toBeNull()
+  })
+
+  it('withBoardHeader takes the specs line as an optional fourth argument, after the budget and title lines', () => {
+    const limits = { title: 80, goal: 120 }
+    const clean = { titles: 0, goals: 0, limits }
+    const boardBudget = SuiteBudget.fromGlobal({ suiteBudget: { seconds: 10, setAt: '2026-09-02T00:00:00.000Z' } })
+    const specs = specSet([], { minimal: { approved: 1, total: 3 }, present: 1 })
+    expect(withBoardHeader(boardBudget, clean, 'body', specs)).toBe('Suite budget: 10s (board)\nSpecs: 1/3 minimal approved · 1 present\n\nbody')
+    expect(withBoardHeader(SuiteBudget.fromGlobal({}), { titles: 1, goals: 0, limits }, 'body', specs))
+      .toBe('Title limit: 80 chars (sprint goal 120) — 1 title(s) and 0 goal(s) over\nSpecs: 1/3 minimal approved · 1 present\n\nbody')
+    expect(withBoardHeader(SuiteBudget.fromGlobal({}), clean, 'body', specs)).toBe('Specs: 1/3 minimal approved · 1 present\n\nbody')
+    expect(withBoardHeader(SuiteBudget.fromGlobal({}), clean, 'body', null)).toBe('body')
+    expect(withBoardHeader(SuiteBudget.fromGlobal({}), clean, 'body', specSet([], {}, false))).toBe('body')
+    expect(withBoardHeader(SuiteBudget.fromGlobal({}), clean, 'body')).toBe('body')
+  })
+
+  it('formatSpecsProbeMessage: the two no-set messages name the minimal files and the owner chain', () => {
+    expect(formatSpecsProbeMessage('absent'))
+      .toBe('Specs: specs/ not found — the SDD spec set lives in specs/ (minimal: PRD.md, RULES.md, API_SPEC.md; owners in the order of the agents: product → domain → architect → api-data → test → agents → ops)')
+    expect(formatSpecsProbeMessage('not-a-directory')).toBe('Specs: specs is not a directory')
+    expect(formatSpecsProbeMessage('no-workspace')).toBe('Specs: no workspace — the spec set lives in <workspace>/specs/')
+  })
+
+  it('formatSpecStatus: the header, then one id-first line per entry in the set order', () => {
+    const many = Array.from({ length: 12 }, (_, i) => `R${i + 1}`)
+    const set = specSet([
+      { file: 'PRD.md', owner: 'product', minimal: true, state: 'approved', version: 3, status: 'approved', digest: 'a1b2c3d4', ids: many, reasons: [] },
+      missing('GLOSSARY.md', 'domain'),
+      { file: 'RULES.md', owner: 'domain', minimal: true, state: 'draft', version: 1, status: 'draft', digest: '9f8e7d6c', ids: ['R1', 'R2', 'R3'], reasons: [] },
+      missing('ARCHITECTURE.md', 'architect'),
+      { file: 'API_SPEC.md', owner: 'api-data', minimal: true, state: 'invalid', version: 2, ids: ['R1'], reasons: ['version missing', 'status must be one of draft, approved'] },
+      { file: 'README.md', owner: 'ops', minimal: false, state: 'draft', version: 1, status: 'draft', digest: '00000000', ids: [], reasons: [] },
+      { file: 'NOTES.md', minimal: false, state: 'unknown', ids: [], reasons: [] },
+      { file: 'prd.md', minimal: false, state: 'unknown', ids: [], reasons: [], caseOf: 'PRD.md' },
+    ], { minimal: { approved: 1, total: 3 }, present: 4, invalid: 1, unknown: 2 })
+    expect(formatSpecStatus(set)).toBe([
+      'Specs: 1/3 minimal approved · 4 present · 1 invalid · 2 unknown',
+      'PRD.md [approved v3 · a1b2c3d4] product · minimal — 12 ids (R1 … R12)',
+      'GLOSSARY.md [missing] domain',
+      'RULES.md [draft v1 · 9f8e7d6c] domain · minimal — 3 ids (R1, R2, R3)',
+      'ARCHITECTURE.md [missing] architect',
+      'API_SPEC.md [invalid] api-data · minimal — version missing; status must be one of draft, approved',
+      'README.md [draft v1 · 00000000] ops — no ids',
+      'NOTES.md [unknown] — not in the catalog',
+      'prd.md [unknown] — not in the catalog (case: PRD.md?)',
+    ].join('\n'))
+    // Six ids are all shown; seven collapse to first … last.
+    const six = { ...set.entries[2]!, ids: ['R1', 'R2', 'R3', 'R4', 'R5', 'R6'] }
+    expect(formatSpecStatus(specSet([six])).split('\n')[1]).toBe('RULES.md [draft v1 · 9f8e7d6c] domain · minimal — 6 ids (R1, R2, R3, R4, R5, R6)')
+    const seven = { ...six, ids: [...six.ids, 'S1'] }
+    expect(formatSpecStatus(specSet([seven])).split('\n')[1]).toBe('RULES.md [draft v1 · 9f8e7d6c] domain · minimal — 7 ids (R1 … S1)')
+  })
+
+  it('formatSpecStatus: unknown lines are capped at SPEC_UNKNOWN_CAP with a +N tail; a set that does not exist prints its probe message', () => {
+    const unknown = Array.from({ length: 23 }, (_, i) => ({ file: `u${String(i).padStart(2, '0')}.md`, minimal: false, state: 'unknown' as const, ids: [], reasons: [] }))
+    const lines = formatSpecStatus(specSet(unknown, { unknown: 23 })).split('\n')
+    expect(lines).toHaveLength(1 + 20 + 1)
+    expect(lines[20]).toBe('u19.md [unknown] — not in the catalog')
+    expect(lines[21]).toBe('  +3 unknown file(s) not shown')
+    expect(formatSpecStatus(SpecSet.of({ kind: 'absent' }))).toBe(formatSpecsProbeMessage('absent'))
+    expect(formatSpecStatus(SpecSet.of({ kind: 'not-a-directory' }))).toBe(formatSpecsProbeMessage('not-a-directory'))
+  })
+})
