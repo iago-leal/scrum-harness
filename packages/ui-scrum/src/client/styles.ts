@@ -263,11 +263,23 @@ button.scrum-chev:hover { background: var(--bgColor-neutral-muted, rgba(70, 90, 
   box-shadow: var(--shadow-floating-large, 0 24px 64px rgba(0,0,0,0.35));
   padding: 0 0 16px; font-size: 13px;
 }
-/* Primer dialog anatomy: bordered header, padded body, footer actions. */
+/* Primer dialog anatomy: bordered header, padded body, footer actions. The
+   header is the drag handle (comp-56 R1): no native selection there — the
+   pointerdown preventDefault plus user-select keep a drag from painting text
+   across the chat; the id stays copyable in the crumb and in the tree. */
 .scrum-wi .scrum-details-head {
   padding: 12px 16px;
   border-bottom: 1px solid var(--borderColor-muted, #eef0f4);
+  cursor: grab; touch-action: none; user-select: none;
 }
+.scrum-wi .scrum-details-head.is-dragging { cursor: grabbing; }
+/* Moved (comp-56 R3): the dialog is fixed at the remembered left/top (inline,
+   clamped on read — never transform: it must not become the containing block
+   of its own fixed menus) and the overlay stops being a backdrop — transparent
+   and click-through, so the chat underneath is readable, scrollable, clickable. */
+.scrum-wi.is-moved { position: fixed; }
+.scrum-wi-overlay.is-moved { background: transparent; pointer-events: none; }
+.scrum-wi-overlay.is-moved .scrum-wi { pointer-events: auto; }
 .scrum-wi .scrum-details-crumb { margin: 8px 16px 0; }
 .scrum-wi > .scrum-field { margin: 12px 16px 0; }
 .scrum-wi .scrum-wi-grid { margin: 0 16px; }

@@ -14,7 +14,8 @@
  * @module @scrum-harness/ui/client/Details
  */
 
-import { Fragment, useEffect, useRef, useState } from 'react'
+import { Fragment, useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from 'react'
+import type { CSSProperties } from 'react'
 import type { ScrumState, WirePhase, WirePhaseReadiness, WireTaskKind, WireTraceMatrix } from './api.ts'
 import { COMPONENT_FLOW, FEATURE_FLOW } from './api.ts'
 import {
@@ -27,6 +28,9 @@ import type { Block, BlockState, Renderer, Theme } from './mermaid.ts'
 import type { MermaidEngine } from './mermaid-engine.ts'
 import { Counter, KIND_META, StateDot, TypeIcon } from './meta.tsx'
 import type { RunOutcome } from './settle.ts'
+import { clampPlacement, dragMove } from './drag.ts'
+import type { Placement, Point, Size } from './drag.ts'
+import type { Switch } from './side.ts'
 
 /** Typing pause before the preview repaints (comp-44 R4). */
 const PREVIEW_DEBOUNCE_MS = 300
@@ -208,6 +212,8 @@ export function WorkItemForm(props: {
   theme: Theme
   /** The title ceilings from the Model (comp-53 R6a); absent on an old server → no counter. */
   limits?: { title: number; goal: number }
+  /** Where the user left the form (comp-56 R2): page-level; null = centered, modal. */
+  placement: Switch<Placement | null>
 }) {
   const { node, onClose, engine, theme } = props
   const server = serverOf(node)
@@ -327,6 +333,75 @@ export function WorkItemForm(props: {
     }
   }, [])
 
+  // comp-56: the draggable form. The placement is the page switch as the user
+  // left it; the CLAMP IS ON READ (r2 M1) — `rendered` is derived from the
+  // measured dialog size and viewport, and the switch is only written by the
+  // drag (already clamped) and by «⌖ Centralizar» (null). Two mount points
+  // therefore never fight over the value.
+  const placement = useSyncExternalStore(props.placement.subscribe, props.placement.get)
+  const dialogRef = useRef<HTMLDivElement | null>(null)
+  const [measure, setMeasure] = useState<{ size: Size; viewport: Size } | null>(null)
+  const [dragging, setDragging] = useState(false)
+  const dragRef = useRef<{ origin: Placement; start: Point; size: Size; viewport: Size } | null>(null)
+  const latestRef = useRef<Point>({ x: 0, y: 0 })
+  const frameRef = useRef<number | null>(null)
+  const moved = placement !== null
+  const readMeasure = () => {
+    const el = dialogRef.current
+    if (el === null) return
+    setMeasure({
+      size: { width: el.offsetWidth, height: el.offsetHeight },
+      viewport: { width: document.documentElement.clientWidth, height: document.documentElement.clientHeight },
+    })
+  }
+  // Re-measure when the form becomes floating, when the item changes (the
+  // height follows the content) and on window resize — never writing back.
+  useLayoutEffect(() => {
+    if (!moved) return
+    readMeasure()
+    window.addEventListener('resize', readMeasure)
+    return () => { window.removeEventListener('resize', readMeasure) }
+  }, [moved, node.id])
+  const rendered = placement === null || measure === null ? null : clampPlacement(placement, measure.size, measure.viewport)
+  const viewportNow = (): Size => ({ width: document.documentElement.clientWidth, height: document.documentElement.clientHeight })
+  /** The header is the handle (R1): pointer capture, rAF-throttled moves against the drag origin. */
+  const onHandleDown = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (e.button !== 0 || (e.target as Element).closest('button') !== null) return
+    const el = dialogRef.current
+    if (el === null) return
+    e.preventDefault()
+    e.currentTarget.setPointerCapture(e.pointerId)
+    const rect = el.getBoundingClientRect()
+    dragRef.current = {
+      origin: { left: rect.left, top: rect.top },
+      start: { x: e.clientX, y: e.clientY },
+      size: { width: rect.width, height: rect.height },
+      viewport: viewportNow(),
+    }
+    latestRef.current = { x: e.clientX, y: e.clientY }
+    setDragging(true)
+  }
+  const flushDrag = () => {
+    frameRef.current = null
+    const d = dragRef.current
+    if (d === null) return
+    props.placement.set(dragMove(d.origin, d.start, latestRef.current, d.size, d.viewport))
+  }
+  const onHandleMove = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (!e.currentTarget.hasPointerCapture(e.pointerId) || dragRef.current === null) return
+    latestRef.current = { x: e.clientX, y: e.clientY }
+    frameRef.current ??= requestAnimationFrame(flushDrag)
+  }
+  const onHandleUp = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (!e.currentTarget.hasPointerCapture(e.pointerId)) return
+    e.currentTarget.releasePointerCapture(e.pointerId)
+    if (frameRef.current !== null) cancelAnimationFrame(frameRef.current)
+    latestRef.current = { x: e.clientX, y: e.clientY }
+    flushDrag()
+    dragRef.current = null
+    setDragging(false)
+  }
+
   // Azure-style dialog: Escape closes from anywhere — through the discard guard, never mid-composition (r1 L7).
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape' && !e.isComposing) closeRef.current() }
@@ -372,15 +447,30 @@ export function WorkItemForm(props: {
   const dirtyTitle = dirty.artifacts ? 'Salve os rascunhos antes — o gate lê o que está no servidor' : undefined
 
   return (
-    <div className="scrum-wi-overlay" onMouseDown={(e) => { if (e.target === e.currentTarget) requestClose() }}>
-      <div className={`scrum-wi${node.kind === 'component' ? ' is-component' : ''}`} role="dialog" aria-modal="true">
-        <div className="scrum-details-head">
+    // Modal while centered; floating and click-through once the user moved it
+    // (R3) — with pointer-events: none the overlay is never the mousedown target.
+    <div className={`scrum-wi-overlay${moved ? ' is-moved' : ''}`} onMouseDown={(e) => { if (e.target === e.currentTarget) requestClose() }}>
+      <div
+        ref={dialogRef}
+        className={`scrum-wi${node.kind === 'component' ? ' is-component' : ''}${moved ? ' is-moved' : ''}`}
+        role="dialog"
+        aria-modal={!moved}
+        style={rendered === null ? undefined : { left: rendered.left, top: rendered.top } as CSSProperties}
+      >
+        <div
+          className={`scrum-details-head${dragging ? ' is-dragging' : ''}`}
+          onPointerDown={onHandleDown}
+          onPointerMove={onHandleMove}
+          onPointerUp={onHandleUp}
+          onPointerCancel={onHandleUp}
+        >
           <TypeIcon kind={node.kind} />
           <span className="scrum-details-kind">{KIND_META[node.kind].label}</span>
           <span className="scrum-id">{node.id}</span>
           {node.status !== undefined && <StateDot status={node.status} />}
           {node.readyForDone === true && <span className="scrum-phase scrum-phase-ready" title="O gate de done está satisfeito">ready for done</span>}
           <span style={{ flex: 1 }} />
+          {moved && <button className="scrum-close dark" title="Voltar ao centro (modal)" onClick={() => { props.placement.set(null) }}>⌖</button>}
           <button className="scrum-close dark" title="Fechar (Esc)" onClick={requestClose}>✕</button>
         </div>
         {node.crumb !== undefined && <div className="scrum-details-crumb">{node.crumb}</div>}

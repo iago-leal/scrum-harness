@@ -24,6 +24,7 @@ import type { RunOutcome } from './settle.ts'
 import { Shelf } from './Shelf.tsx'
 import { nextSideAction, pollGate, sideTitle } from './side.ts'
 import type { PanelMode, SideAction, SideState, Switch } from './side.ts'
+import type { Placement } from './drag.ts'
 import type { ScrumTheme } from './store.ts'
 import { Sprints } from './Sprints.tsx'
 import { Tree } from './Tree.tsx'
@@ -46,6 +47,8 @@ export interface ScrumViewInjected {
   theme: Switch<ScrumTheme>
   /** The one executor of the side gestures (comp-55 R5/R6). */
   runSide: (action: SideAction) => void
+  /** Where the work item form was left (comp-56 R2): page-level; null = centered, modal. */
+  placement: Switch<Placement | null>
 }
 
 /** Minimal structural view of one workspace row (the wire type lives host-side). */
@@ -238,6 +241,7 @@ export function ScrumPanel(props: ScrumPanelProps) {
             engine={props.engine}
             theme={theme}
             limits={data?.limits}
+            placement={props.placement}
           />
         )}
       </div>

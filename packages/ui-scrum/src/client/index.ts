@@ -36,6 +36,7 @@ import { createSettler } from './settle.ts'
 import type { SettleSink } from './settle.ts'
 import { applySideAction, createSwitch, readTheme, shouldRegister, THEME_KEY } from './side.ts'
 import type { SideAction as SideGesture, SideState, StorageLike } from './side.ts'
+import type { Placement } from './drag.ts'
 import { SCRUM_CSS } from './styles.ts'
 
 export const name = 'ui-scrum'
@@ -84,6 +85,9 @@ export function apply(ctx: ClientContext): void {
   const theme = createSwitch<ScrumTheme>(readTheme(storage), {
     persist: { key: THEME_KEY, storage, parse: raw => (raw === 'dark' ? 'dark' : 'light'), print: v => v },
   })
+  // Where the user left the work item form (comp-56 R2): page-level, never
+  // persisted (viewports differ across reloads), null = centered and modal.
+  const placement = createSwitch<Placement | null>(null)
 
   /**
    * The one executor of the three gestures (R5/R6): state first (the
@@ -125,6 +129,7 @@ export function apply(ctx: ClientContext): void {
       side,
       theme,
       runSide,
+      placement,
     }
   }
 
