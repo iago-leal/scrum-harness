@@ -11,6 +11,7 @@
  */
 
 import { useState } from 'react'
+import type { CSSProperties } from 'react'
 import { COLUMN_LABELS, COLUMNS, COMPONENT_FLOW, FEATURE_FLOW } from './api.ts'
 import type { ScrumState, WireOverflow, WirePhase, WireTask, WireTaskKind } from './api.ts'
 import type { BoardLevel } from './store.ts'
@@ -31,6 +32,8 @@ export interface BoardUi {
   /** Swimlanes per component on the task board. */
   swimlanes: boolean
   setSwimlanes: (on: boolean) => void
+  /** Whether the «☰ Raias» toggle renders (false in the details column, whose stacked columns cannot carry lanes — comp-55 R7). */
+  lanesToggle?: boolean
 }
 
 /** WIP wiring of the task board columns (absent on parent-level boards). */
@@ -146,7 +149,7 @@ function Kanban(props: {
   const [dragOver, setDragOver] = useState<string | null>(null)
   const { columns, items } = props
   return (
-    <div className="scrum-board" style={{ gridTemplateColumns: `repeat(${columns.length}, 1fr)` }}>
+    <div className="scrum-board" style={{ '--scrum-cols': String(columns.length) } as CSSProperties}>
       {columns.map((column) => {
         const inColumn = items.filter(item => item.status === column)
         const at = columns.indexOf(column)
@@ -217,7 +220,7 @@ function Kanban(props: {
  */
 function BoardHeads(props: { columns: readonly string[]; items: BoardItem[]; wip?: WipFace }) {
   return (
-    <div className="scrum-board" style={{ gridTemplateColumns: `repeat(${props.columns.length}, 1fr)` }}>
+    <div className="scrum-board" style={{ '--scrum-cols': String(props.columns.length) } as CSSProperties}>
       {props.columns.map((column) => {
         const count = props.items.filter(item => item.status === column).length
         return (
@@ -406,11 +409,13 @@ export function Board(props: { state: ScrumState; callbacks: BoardCallbacks; ui:
           </span>
         ))}
         <span style={{ flex: 1 }} />
-        <button
-          className={`scrum-btn ghost${ui.swimlanes ? ' is-on' : ''}`}
-          title={ui.swimlanes ? 'Desligar raias por componente' : 'Agrupar em raias por componente'}
-          onClick={() => { ui.setSwimlanes(!ui.swimlanes) }}
-        >☰ Raias</button>
+        {ui.lanesToggle !== false && (
+          <button
+            className={`scrum-btn ghost${ui.swimlanes ? ' is-on' : ''}`}
+            title={ui.swimlanes ? 'Desligar raias por componente' : 'Agrupar em raias por componente'}
+            onClick={() => { ui.setSwimlanes(!ui.swimlanes) }}
+          >☰ Raias</button>
+        )}
         {pivot}
       </div>
       {ui.swimlanes && lanes.length > 0

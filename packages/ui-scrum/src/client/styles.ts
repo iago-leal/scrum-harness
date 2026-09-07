@@ -40,7 +40,7 @@ export const SCRUM_CSS = `
   padding: 6px 12px; border-radius: var(--borderRadius-medium, 7px); font-size: 13px; opacity: 0.75;
 }
 .scrum-tab:hover { background: rgba(255,255,255,0.12); opacity: 1; }
-.scrum-tab.is-active { background: rgba(255,255,255,0.18); opacity: 1; font-weight: 600; }
+.scrum-tab.is-active, .scrum-tab.is-on { background: rgba(255,255,255,0.18); opacity: 1; font-weight: 600; }
 .scrum-close {
   border: none; background: transparent; color: inherit; cursor: pointer;
   font-size: 18px; line-height: 1; padding: 4px 8px; border-radius: var(--borderRadius-medium, 6px); opacity: 0.8;
@@ -448,7 +448,9 @@ button.scrum-chev:hover { background: var(--bgColor-neutral-muted, rgba(70, 90, 
 .scrum-chart svg { display: block; }
 
 /* ---- Kanban board ---- */
-.scrum-board { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; align-items: start; }
+/* The column count rides a custom property set inline by Board.tsx (comp-55 R7):
+   the sheet owns the template, so the side mode can override it. */
+.scrum-board { display: grid; grid-template-columns: repeat(var(--scrum-cols, 4), 1fr); gap: 12px; align-items: start; }
 .scrum-col.slim { min-height: 90px; }
 .scrum-col.heads-only { min-height: 0; padding: 6px 10px; }
 .scrum-col.heads-only .scrum-col-head { margin-bottom: 0; }
@@ -610,4 +612,58 @@ button.scrum-chev:hover { background: var(--bgColor-neutral-muted, rgba(70, 90, 
   opacity: 0.55; border-radius: var(--borderRadius-full, 999px);
 }
 .scrum-rel-chip-x:hover { opacity: 1; background: var(--bgColor-accent-emphasis, #2f6fed); color: var(--fgColor-onEmphasis, #fff); }
+
+/* ---- Side mode: the board in the AppFrame details column, 300–520 px (comp-55 R7) ----
+   A mode class, not a container query: container-type applies layout containment,
+   which would make the panel the containing block of the fixed work item form.
+   No transform / perspective / filter / backdrop-filter / will-change / contain /
+   container-type on any ancestor of the form. */
+.scrum-view.is-side { display: flex; height: 100%; min-height: 0; }
+.is-side .scrum-head { gap: 8px; padding: 8px 10px; flex-wrap: wrap; }
+.is-side .scrum-head .scrum-sub { display: none; }
+.is-side .scrum-head .scrum-ws { max-width: 120px; }
+.is-side .scrum-tabs { flex-wrap: wrap; }
+.is-side .scrum-tab { padding: 5px 9px; font-size: 12.5px; }
+.is-side .scrum-body { padding: 0 10px 12px; }
+.is-side .scrum-error { margin: 10px 10px 0; }
+.is-side .scrum-section-head { flex-wrap: wrap; }
+/* Backlog: Item | Estado — the Pontos and Sprint cells hide (the rollup stays on the title).
+   The item cell clips like the others (dogfood: at ~300px the id badge painted over Estado),
+   the title keeps a readable floor and the id badge yields first. */
+.is-side .scrum-bl-row { grid-template-columns: minmax(0, 1fr) 104px; }
+.is-side .scrum-bl-row > :nth-child(3), .is-side .scrum-bl-row > :nth-child(4) { display: none; }
+.is-side .scrum-bl-item { overflow: hidden; gap: 5px; padding-right: 6px; }
+.is-side .scrum-bl-item .scrum-bl-title { min-width: 48px; }
+/* The id badge is never truncated (it is how the chat names items); the phase
+   chip and the row menu move to the tail, so the clip eats them first. */
+.is-side .scrum-bl-item .scrum-id { flex: none; }
+.is-side .scrum-bl-item .scrum-phase { order: 5; }
+.is-side .scrum-bl-item .scrum-bl-hover { order: 6; }
+.is-side .scrum-bl-cell { font-size: 12px; }
+/* Board: the four columns stack, each with its own head (lanes are off in this mode).
+   minmax(0, 1fr): a bare 1fr floors at the cards' min-content and the column would
+   grow past the panel (dogfood at 300px). Long chips in section heads clip. */
+.is-side .scrum-board { grid-template-columns: minmax(0, 1fr); gap: 8px; }
+.is-side .scrum-col { min-height: 60px; min-width: 0; }
+.is-side .scrum-card { min-width: 0; overflow: hidden; }
+.is-side .scrum-card .scrum-card-meta { flex-wrap: wrap; }
+.is-side .scrum-section-head > * { max-width: 100%; }
+.is-side .scrum-section-head .scrum-pts { overflow: hidden; text-overflow: ellipsis; }
+.is-side .scrum-section-head .scrum-muted { white-space: normal; }
+/* Sprints: the goal owns its line, the release select fits the card. */
+.is-side .scrum-sprint-head .scrum-goal { min-width: 0; flex-basis: 100%; }
+.is-side .scrum-sprint-head select { max-width: 100%; }
+
+/* ---- The «▦ SCRUM» capsule in the session header (comp-55 R6b) ----
+   Lives outside the panel's Primer wrapper: shell tokens only, the geometry of
+   the «Session log» capsule beside it. */
+.scrum-capsule {
+  display: inline-flex; align-items: center; justify-content: center; gap: 4px;
+  height: 32px; padding: 6px 12px;
+  border: 1px solid var(--dsw-alias-border-l2); border-radius: 18px;
+  background: transparent; color: var(--dsw-alias-label-primary);
+  font-family: var(--dsw-font-family, inherit); font-size: 13px; font-weight: 400; line-height: 20px;
+  cursor: pointer; white-space: nowrap;
+}
+.scrum-capsule:hover, .scrum-capsule.is-on { background: var(--dsw-alias-interactive-bg-hover); }
 `
