@@ -178,12 +178,11 @@ describe('shouldRegister and the lifecycle sequences (R1 / R4)', () => {
 })
 
 describe('pollGate (R4)', () => {
-  it('always polls in the tab, only at a positive width in the column', () => {
-    expect(pollGate('tab', 0)).toBe(true)
-    expect(pollGate('tab', 360)).toBe(true)
-    expect(pollGate('side', 0)).toBe(false)
-    expect(pollGate('side', 1)).toBe(true)
-    expect(pollGate('side', 360)).toBe(true)
+  it('polls only at a positive rendered width (closed column = 0px = no poll)', () => {
+    expect(pollGate(0)).toBe(false)
+    expect(pollGate(-1)).toBe(false)
+    expect(pollGate(1)).toBe(true)
+    expect(pollGate(360)).toBe(true)
   })
 })
 

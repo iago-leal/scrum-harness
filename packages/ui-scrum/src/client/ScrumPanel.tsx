@@ -1,20 +1,21 @@
 /**
- * The SCRUM board body, shared by its two mount points (comp-55 R2): the
- * ▦ SCRUM tab of the conversation view ring (`mode: 'tab'`) and the AppFrame
- * details column beside the chat (`mode: 'side'`). Section tabs (Backlog /
- * Board / Sprints / Arquivo / Lixeira) over the store's fetched state, the
- * work item form modal (page-wide from either mount point), and the poll:
- * "while mounted" in the tab (the ring mounts only the active view), "while
- * visible" in the column, which never unmounts (closed = 0px) — a
- * ResizeObserver on the root decides (R4). The board shown is the session's
- * own workspace (falling back to the most recent workspace, then the global
- * board). Props are typed by the intersection of the two runtime kits: the
- * owner props of the two slots differ, the session kit does not.
+ * The SCRUM board body in the AppFrame details column beside the chat
+ * (comp-55; since v0.23 the column is the board's only seat — the
+ * `conversation.view` tab was retired, so the column renders the whole board
+ * exactly as the tab did: title, breadcrumb, section tabs, the four-column
+ * backlog grid, the board with lanes). Section tabs (Backlog / Board /
+ * Sprints / Arquivo / Lixeira) over the store's fetched state, the work item
+ * form modal (page-wide from the column), and the poll: "while visible",
+ * because the column never unmounts (closed = 0px) — a ResizeObserver on the
+ * root decides (R4). The board shown is the session's own workspace (falling
+ * back to the most recent workspace, then the global board).
  * @module @scrum-harness/ui/client/ScrumPanel
  */
 
 import { useEffect, useRef, useState, useSyncExternalStore } from 'react'
-import type { GlobalStandardProps, PropsStore, SessionStandardProps } from '@deepseek-ai/dsh-client-ui-slots'
+import type { PropsRuntime, PropsStore } from '@deepseek-ai/dsh-client-ui-slots'
+// Type-only: pulls the 'details' SlotMap row declared by ui-layout.
+import type {} from '@deepseek-ai/dsh-client-ui-layout/client'
 import type { createScrumStore } from './store.ts'
 import type { BoardLevel, ScrumView as SectionView } from './store.ts'
 import { Board } from './Board.tsx'
@@ -22,12 +23,15 @@ import { resolveNode, WorkItemForm } from './Details.tsx'
 import type { MermaidEngine } from './mermaid-engine.ts'
 import type { RunOutcome } from './settle.ts'
 import { Shelf } from './Shelf.tsx'
-import { nextSideAction, pollGate, sideTitle } from './side.ts'
-import type { PanelMode, SideAction, SideState, Switch } from './side.ts'
+import { pollGate } from './side.ts'
+import type { SideAction, SideState, Switch } from './side.ts'
 import type { Placement } from './drag.ts'
 import type { ScrumTheme } from './store.ts'
 import { Sprints } from './Sprints.tsx'
 import { Tree } from './Tree.tsx'
+
+// The mutation outcome (comp-43 R5) travels with the injected face for index.ts.
+export type { RunOutcome } from './settle.ts'
 
 /** Injected face: same-origin API calls wrapped by apply, plus the page switches. */
 export interface ScrumViewInjected {
@@ -58,13 +62,11 @@ interface WorkspaceLike {
   title?: string
 }
 
-/** Props of the shared body: the session + global kits, the store share, the face, and the mount mode. */
+/** Full composed props of the details registration. */
 export type ScrumPanelProps =
-  & SessionStandardProps
-  & GlobalStandardProps
+  & PropsRuntime<'details'>
   & PropsStore<ReturnType<typeof createScrumStore>>
   & ScrumViewInjected
-  & { mode: PanelMode }
 
 const TABS: { view: SectionView; label: string }[] = [
   { view: 'backlog', label: 'Backlog' },
@@ -77,9 +79,9 @@ const TABS: { view: SectionView; label: string }[] = [
 /** Poll interval while the gate is open (model/tool changes appear live). */
 const POLL_MS = 4000
 
-/** The board body at one mount point. */
+/** The board body in the details column. */
 export function ScrumPanel(props: ScrumPanelProps) {
-  const { mode, refresh, sessionId, side } = props
+  const { refresh, sessionId, side } = props
   const view = props.useStore(s => s.view)
   const data = props.useStore(s => s.data)
   const error = props.useStore(s => s.error)
@@ -89,9 +91,8 @@ export function ScrumPanel(props: ScrumPanelProps) {
   const boardLevel = props.useStore(s => s.boardLevel)
   const swimlanes = props.useStore(s => s.swimlanes)
   const theme = useSyncExternalStore(props.theme.subscribe, props.theme.get)
-  const sideState = useSyncExternalStore(side.subscribe, side.get)
 
-  /** Flip the color theme (the switch persists it; both mount points follow). */
+  /** Flip the color theme (the switch persists it). */
   const toggleTheme = () => { props.theme.set(theme === 'light' ? 'dark' : 'light') }
 
   // The board this panel shows: its own session's workspace, then the most
@@ -109,30 +110,29 @@ export function ScrumPanel(props: ScrumPanelProps) {
 
   // R4: in the column the rendered width is the only truth about "open"
   // (ctx.layout exposes no read). The observer reports contentRect.width —
-  // the root has neither padding nor border — and the tab has no observer.
+  // the root has neither padding nor border.
   const rootRef = useRef<HTMLDivElement | null>(null)
   const [width, setWidth] = useState(0)
   useEffect(() => {
     const el = rootRef.current
-    if (el === null || mode !== 'side') return
+    if (el === null) return
     const observer = new ResizeObserver((entries) => { setWidth(entries[0]?.contentRect.width ?? 0) })
     observer.observe(el)
     return () => { observer.disconnect(); setWidth(0) }
-  }, [mode])
-  const gate = pollGate(mode, width)
+  }, [])
+  const gate = pollGate(width)
 
   // Publish `visible` from the boolean gate only (the closing transition
   // fires dozens of observer callbacks); the cleanup zeroes it, so no orphan
   // `visible: true` survives an unmount or a session remount.
   useEffect(() => {
-    if (mode !== 'side') return
     const current = side.get()
     if (current.visible !== gate) side.set({ on: current.on, visible: gate })
     return () => {
       const last = side.get()
       if (last.visible) side.set({ on: last.on, visible: false })
     }
-  }, [gate, mode, side])
+  }, [gate, side])
 
   // Fetch immediately when the gate opens, then poll while it stays open.
   useEffect(() => {
@@ -157,13 +157,13 @@ export function ScrumPanel(props: ScrumPanelProps) {
     setCollapsed: (map: Record<string, boolean>) => { props.actions.setCollapsed(map) },
     select: (id: string | null) => { props.actions.setSelected(id) },
   }
-  /** Store-backed viewing state of the board section; the column stacks columns, so no lanes (R7). */
+  /** Store-backed viewing state of the board section. */
   const boardUi = {
     level: boardLevel,
     setLevel: (level: BoardLevel) => { props.actions.setBoardLevel(level) },
-    swimlanes: mode === 'side' ? false : swimlanes,
+    swimlanes,
     setSwimlanes: (on: boolean) => { props.actions.setSwimlanes(on) },
-    lanesToggle: mode !== 'side',
+    lanesToggle: true,
   }
   /** The item open in the work item form, resolved against fresh state. */
   const selectedNode = data === null || selected === null ? null : resolveNode(data, selected)
@@ -171,7 +171,7 @@ export function ScrumPanel(props: ScrumPanelProps) {
   return (
     <div
       ref={rootRef}
-      className={`scrum-view is-${mode}`}
+      className="scrum-view is-side"
       // Activates (and scopes) the Primer color theme of primer.ts: both
       // theme attributes stay set; data-color-mode picks which one lights up.
       data-color-mode={theme}
@@ -180,12 +180,12 @@ export function ScrumPanel(props: ScrumPanelProps) {
     >
       <div className="scrum-panel">
         <div className="scrum-head">
-          {mode === 'tab' && <h1>SCRUM</h1>}
+          <h1>SCRUM</h1>
           <span
             className="scrum-ws"
             title={wsPath ?? 'Quadro global (sessões sem workspace)'}
           >📁 {wsTitle ?? 'Global'}</span>
-          {mode === 'tab' && <span className="scrum-sub">Release › Função › Componente › Tarefa</span>}
+          <span className="scrum-sub">Release › Função › Componente › Tarefa</span>
           <div className="scrum-tabs">
             {TABS.map(tab => (
               <button
@@ -202,24 +202,14 @@ export function ScrumPanel(props: ScrumPanelProps) {
             onClick={toggleTheme}
           >{theme === 'light' ? '🌙' : '☀️'}</button>
           <button className="scrum-tab" title="Atualizar" onClick={() => { refresh(wsPath) }}>⟳</button>
-          {mode === 'tab'
-            ? (
-              <button
-                className={`scrum-tab${sideState.on ? ' is-on' : ''}`}
-                title={sideTitle(sideState)}
-                onClick={() => { props.runSide(nextSideAction(side.get())) }}
-              >⇥ Ao lado</button>
-            )
-            : (
-              // The × is "close", not "toggle": during the closing transition
-              // nextSideAction would answer 'open' and a double click would
-              // reopen (review r3 M1).
-              <button
-                className="scrum-tab"
-                title="Fechar e devolver os detalhes de tool"
-                onClick={() => { props.runSide('close') }}
-              >×</button>
-            )}
+          {/* The × is "close", not "toggle": during the closing transition
+              nextSideAction would answer 'open' and a double click would
+              reopen (review r3 M1). */}
+          <button
+            className="scrum-tab"
+            title="Fechar e devolver os detalhes de tool"
+            onClick={() => { props.runSide('close') }}
+          >×</button>
         </div>
         {error !== null && <div className="scrum-error">{error}</div>}
         <div className={`scrum-body${busy ? ' scrum-busy' : ''}`}>

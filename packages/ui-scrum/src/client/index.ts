@@ -1,13 +1,14 @@
 /**
  * Browser half of the SCRUM board plugin: injects the stylesheet and
- * registers the board at its mount points — the ▦ SCRUM tab in the
- * conversation view ring (`Chat · Trajectory · ▦ SCRUM`, v0.9) and, since
- * v0.22 (comp-55), the AppFrame `details` column beside the chat, toggled by
- * a page-level switch: while on (or still visible after a close), the plugin
- * shadows ui-conversation's tool DetailsPanel at priority -1; off, the
- * registration is disposed and the tool panel returns. Mutations funnel
- * through the injected `run` callback so busy/error handling lives here, not
- * in components.
+ * registers the board at its one mount point — since v0.22 (comp-55) the
+ * AppFrame `details` column beside the chat, toggled by a page-level switch
+ * (the «▦ SCRUM» capsule in the session header, beside «Session log»): while
+ * on (or still visible after a close), the plugin shadows ui-conversation's
+ * tool DetailsPanel at priority -1; off, the registration is disposed and
+ * the tool panel returns. The ▦ SCRUM tab of the conversation view ring
+ * (v0.9 – v0.22) was retired in v0.23: the column renders the whole board.
+ * Mutations funnel through the injected `run` callback so busy/error
+ * handling lives here, not in components.
  * @module @scrum-harness/ui/client
  */
 
@@ -28,8 +29,7 @@ import { createMermaidEngine } from './mermaid-engine.ts'
 import { createScrumStore } from './store.ts'
 import type { ScrumTheme } from './store.ts'
 import { PRIMER_CSS } from './primer.ts'
-import { ScrumView } from './ScrumView.tsx'
-import type { ScrumViewInjected } from './ScrumView.tsx'
+import type { ScrumViewInjected } from './ScrumPanel.tsx'
 import { ScrumSide } from './ScrumSide.tsx'
 import { SideAction } from './SideAction.tsx'
 import { createSettler } from './settle.ts'
@@ -78,8 +78,7 @@ export function apply(ctx: ClientContext): void {
   }, 'ui-scrum: stylesheet')
 
   // Page-level switches (comp-55 R1/R3): transient side state — reload =
-  // off, mirroring the layout store — and the persisted color theme, shared
-  // by every mount point so the tab and the column never disagree.
+  // off, mirroring the layout store — and the persisted color theme.
   const side = createSwitch<SideState>({ on: false, visible: false })
   const storage = safeStorage()
   const theme = createSwitch<ScrumTheme>(readTheme(storage), {
@@ -102,12 +101,8 @@ export function apply(ctx: ClientContext): void {
     else ctx.layout.closeDetails()
   }
 
-  // One store handle mounts under exactly one scope, and two mount points
-  // share by DATA (the /scrum-api routes), never by handle — see the 01/09
-  // postmortem in the README. Both slots are session-scoped, so sharing one
-  // handle would be allowed; the user chose two (independent section and
-  // selection in the tab and in the column).
-  const viewStore = createScrumStore()
+  // One store handle mounts under exactly one scope (see the 01/09
+  // postmortem in the README); the column is the only mount point now.
   const sideStore = createScrumStore()
 
   /**
@@ -132,16 +127,6 @@ export function apply(ctx: ClientContext): void {
       placement,
     }
   }
-
-  // The SCRUM tab in the conversation view ring (chat: 0, trajectory: 10).
-  ctx.slots.inject('conversation.view', () => ctx.slots.register({
-    name: 'conversation.view',
-    id: 'scrum',
-    order: 20,
-    label: () => '▦ SCRUM',
-    store: viewStore,
-    inject: (_sessionId, actions): ScrumViewInjected => wireFace(actions),
-  }, ScrumView))
 
   // The details column (comp-55 R1): the registration is an EFFECT of the
   // switch, never a step of the click. `sync` keeps at most one live
@@ -176,8 +161,8 @@ export function apply(ctx: ClientContext): void {
   })
 
   // The «▦ SCRUM» capsule in the session header (comp-55 R6b): right-aligned
-  // utilities, after the «Session log» capsule (order 0) — reachable from the
-  // Chat tab, which is the point of the column.
+  // utilities, after the «Session log» capsule (order 0) — since v0.23 the
+  // only trigger of the board (the × in the column closes it).
   ctx.slots.inject('conversation.session.header.utilities', () => ctx.slots.register({
     name: 'conversation.session.header.utilities',
     id: 'scrum-side',

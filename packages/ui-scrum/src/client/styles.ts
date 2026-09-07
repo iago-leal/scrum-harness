@@ -11,8 +11,8 @@
 
 /** The whole board stylesheet. */
 export const SCRUM_CSS = `
-/* The conversation-view seat: the panel fills the shell's flex viewArea
-   inline (v0.9 retired the fixed overlay + sidebar button). */
+/* The panel fills its seat inline (v0.9 retired the fixed overlay + sidebar
+   button; v0.23 retired the conversation-view tab — the seat is the details column). */
 .scrum-view { display: flex; flex: 1; min-height: 0; }
 .scrum-panel {
   width: 100%; height: 100%;
@@ -625,46 +625,21 @@ button.scrum-chev:hover { background: var(--bgColor-neutral-muted, rgba(70, 90, 
 }
 .scrum-rel-chip-x:hover { opacity: 1; background: var(--bgColor-accent-emphasis, #2f6fed); color: var(--fgColor-onEmphasis, #fff); }
 
-/* ---- Side mode: the board in the AppFrame details column, 300–520 px (comp-55 R7) ----
-   A mode class, not a container query: container-type applies layout containment,
-   which would make the panel the containing block of the fixed work item form.
+/* ---- The board in the AppFrame details column (comp-55) ----
+   Since v0.23 the column is the board's only seat and renders exactly what
+   the retired ▦ SCRUM tab did (same head, four-column backlog, board with
+   lanes) — no narrow mode. The root only fills the column's height.
    No transform / perspective / filter / backdrop-filter / will-change / contain /
-   container-type on any ancestor of the form. */
+   container-type on any ancestor of the (position: fixed) work item form. */
 .scrum-view.is-side { display: flex; height: 100%; min-height: 0; }
-.is-side .scrum-head { gap: 8px; padding: 8px 10px; flex-wrap: wrap; }
-.is-side .scrum-head .scrum-sub { display: none; }
-.is-side .scrum-head .scrum-ws { max-width: 120px; }
-.is-side .scrum-tabs { flex-wrap: wrap; }
-.is-side .scrum-tab { padding: 5px 9px; font-size: 12.5px; }
-.is-side .scrum-body { padding: 0 10px 12px; }
-.is-side .scrum-error { margin: 10px 10px 0; }
+/* The column can be dragged down to 300px, narrower than the head and the
+   grids were drawn for: the head wraps (identical when it fits) and the
+   backlog / board keep a floor — below it the body scrolls sideways instead
+   of crushing the Item column to 0px (dogfood at 420). */
+.is-side .scrum-head { flex-wrap: wrap; row-gap: 6px; }
 .is-side .scrum-section-head { flex-wrap: wrap; }
-/* Backlog: Item | Estado — the Pontos and Sprint cells hide (the rollup stays on the title).
-   The item cell clips like the others (dogfood: at ~300px the id badge painted over Estado),
-   the title keeps a readable floor and the id badge yields first. */
-.is-side .scrum-bl-row { grid-template-columns: minmax(0, 1fr) 104px; }
-.is-side .scrum-bl-row > :nth-child(3), .is-side .scrum-bl-row > :nth-child(4) { display: none; }
-.is-side .scrum-bl-item { overflow: hidden; gap: 5px; padding-right: 6px; }
-.is-side .scrum-bl-item .scrum-bl-title { min-width: 48px; }
-/* The id badge is never truncated (it is how the chat names items); the phase
-   chip and the row menu move to the tail, so the clip eats them first. */
-.is-side .scrum-bl-item .scrum-id { flex: none; }
-.is-side .scrum-bl-item .scrum-phase { order: 5; }
-.is-side .scrum-bl-item .scrum-bl-hover { order: 6; }
-.is-side .scrum-bl-cell { font-size: 12px; }
-/* Board: the four columns stack, each with its own head (lanes are off in this mode).
-   minmax(0, 1fr): a bare 1fr floors at the cards' min-content and the column would
-   grow past the panel (dogfood at 300px). Long chips in section heads clip. */
-.is-side .scrum-board { grid-template-columns: minmax(0, 1fr); gap: 8px; }
-.is-side .scrum-col { min-height: 60px; min-width: 0; }
-.is-side .scrum-card { min-width: 0; overflow: hidden; }
-.is-side .scrum-card .scrum-card-meta { flex-wrap: wrap; }
-.is-side .scrum-section-head > * { max-width: 100%; }
-.is-side .scrum-section-head .scrum-pts { overflow: hidden; text-overflow: ellipsis; }
-.is-side .scrum-section-head .scrum-muted { white-space: normal; }
-/* Sprints: the goal owns its line, the release select fits the card. */
-.is-side .scrum-sprint-head .scrum-goal { min-width: 0; flex-basis: 100%; }
-.is-side .scrum-sprint-head select { max-width: 100%; }
+.is-side .scrum-bl { min-width: 620px; }
+.is-side .scrum-board { min-width: 620px; }
 
 /* ---- The «▦ SCRUM» capsule in the session header (comp-55 R6b) ----
    Lives outside the panel's Primer wrapper: shell tokens only, the geometry of

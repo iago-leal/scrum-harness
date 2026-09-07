@@ -64,6 +64,12 @@ const w1 = await sideWidth()
 check(1, 'cápsula abre a coluna em 420 (default do ui-layout)', w1 >= 419 && w1 <= 420, `${w1}px`)
 check(1, 'quadro do workspace', (await page.locator('.is-side .scrum-ws').innerText()).includes('scrum-harness'))
 check(1, 'backlog com linhas', (await page.locator('.is-side .scrum-bl-row').count()) > 3)
+// The script was written against a populated board; on a fresh one (a
+// single release) it clicks the first item and "switches" to the second when
+// there is one. Titles are the clickable cells; add-rows have none.
+const titleCount = await page.locator('.is-side .scrum-bl-title').count()
+const ROW_A = Math.min(3, titleCount - 1)
+const ROW_B = Math.min(ROW_A + 1, titleCount - 1)
 const scroll = await page.locator('.is-side .scrum-body').evaluate(el => ({ sh: el.scrollHeight, ch: el.clientHeight, oy: getComputedStyle(el).overflowY }))
 check(1, 'backlog rola dentro da coluna', scroll.oy === 'auto' && scroll.ch > 0 && scroll.ch < 900, JSON.stringify(scroll))
 check(1, 'cápsula pressionada', (await capsule().getAttribute('aria-pressed')) === 'true' && (await capsule().getAttribute('title')) === 'Fechar a coluna lateral')
@@ -85,14 +91,30 @@ await drag(400)
 const wMin = await sideWidth()
 // The track is 300px; the column paints a 1px left border, so the content box reads 299.
 check(2, 'arraste até o mínimo (300)', Math.round(wMin) >= 299 && Math.round(wMin) <= 300, `${wMin}px`)
-const item = await page.locator('.is-side .scrum-bl-row').nth(3).evaluate(el => getComputedStyle(el).gridTemplateColumns)
-check(2, 'backlog em duas colunas', item.split(' ').length === 2, item)
+// v0.23: the column renders the whole board, exactly as the retired tab did —
+// the four-column backlog grid, the title + breadcrumb, the lanes toggle.
+const item = await page.locator('.is-side .scrum-bl-row').nth(ROW_A).evaluate(el => getComputedStyle(el).gridTemplateColumns)
+check(2, 'backlog em quatro colunas (Item | Estado | Pontos | Sprint)', item.split(' ').length === 4, item)
+check(2, 'cabeçalho completo (título + trilha)', (await page.locator('.is-side .scrum-head h1').count()) === 1 && (await page.locator('.is-side .scrum-head .scrum-sub').isVisible()))
 await page.locator('.is-side .scrum-tab', { hasText: 'Board' }).click()
 await sleep(500)
-const cols = await page.locator('.is-side .scrum-board').first().evaluate(el => getComputedStyle(el).gridTemplateColumns)
-check(2, 'board empilhado (1 coluna)', cols.split(' ').length === 1, cols)
-check(2, 'board com cabeçalhos', (await page.locator('.is-side .scrum-col-head').count()) >= 4)
-check(2, 'sem «☰ Raias»', (await page.locator('.is-side .scrum-btn', { hasText: 'Raias' }).count()) === 0)
+// Without an active sprint the Tarefas board is the «Nenhuma sprint ativa»
+// empty state; fall back to the Componentes / Funções pivots, which have a
+// grid whenever the backlog has items (an empty board only proves the pivot).
+const noSprint = (await page.locator('.is-side .scrum-board').count()) === 0
+if (noSprint) {
+  for (const pivot of ['Componentes', 'Funções']) {
+    await page.locator('.is-side .scrum-pivot-btn', { hasText: pivot }).click(); await sleep(400)
+    if ((await page.locator('.is-side .scrum-board').count()) > 0) break
+  }
+}
+if ((await page.locator('.is-side .scrum-board').count()) > 0) {
+  const cols = await page.locator('.is-side .scrum-board').first().evaluate(el => getComputedStyle(el).gridTemplateColumns)
+  check(2, 'board com as colunas lado a lado', cols.split(' ').length >= 3, `${cols}${noSprint ? ' (sem sprint ativa: pivô de nível)' : ''}`)
+  check(2, 'com «☰ Raias» (só no board de tarefas)', noSprint || (await page.locator('.is-side .scrum-btn', { hasText: 'Raias' }).count()) === 1)
+} else {
+  check(2, 'board vazio neste quadro (sem sprint ativa e sem itens) — pivô renderiza', (await page.locator('.is-side .scrum-pivot-btn').count()) === 3 && (await page.locator('.is-side .scrum-empty').count()) === 1)
+}
 await page.screenshot({ path: join(SHOTS, '2-min-board.png') })
 // comp-57: DETAILS_MAX 900 only fits from 1820px (280 + 900 + 640); at 1600 the
 // concession chain stops at 680, so the max is measured at 1920.
@@ -109,7 +131,7 @@ await page.locator('.is-side .scrum-tab', { hasText: 'Backlog' }).click()
 await sleep(300)
 
 // (3) the work item form covers the page from the column.
-await page.locator('.is-side .scrum-bl-title').nth(3).click()
+await page.locator('.is-side .scrum-bl-title').nth(ROW_A).click()
 await sleep(500)
 const overlay = await page.locator('.scrum-wi-overlay').boundingBox()
 check(3, 'form cobre a página', overlay !== null && overlay.x === 0 && overlay.width === 1600 && overlay.height === 900, JSON.stringify(overlay))
@@ -120,7 +142,7 @@ check(3, 'form fecha', (await page.locator('.scrum-wi-overlay').count()) === 0)
 
 // (F) comp-56 — the draggable form: modal while centered, floating and
 // click-through once moved, position remembered on the page.
-await page.locator('.is-side .scrum-bl-title').nth(3).click()
+await page.locator('.is-side .scrum-bl-title').nth(ROW_A).click()
 await sleep(400)
 const dialog = page.locator('.scrum-wi')
 const before = await dialog.boundingBox()
@@ -140,13 +162,13 @@ check('F', 'aria-modal cai para false', (await dialog.getAttribute('aria-modal')
 await page.locator('textarea[placeholder="Message the agent"], [contenteditable="true"]').first().click({ position: { x: 5, y: 5 } }).catch(() => {})
 await sleep(200)
 check('F', 'o composer do chat recebe o clique com o form aberto', (await page.locator('.scrum-wi').count()) === 1 && (await page.evaluate(() => !document.activeElement?.closest('.scrum-wi'))))
-await page.locator('.is-side .scrum-bl-title').nth(4).click()
+await page.locator('.is-side .scrum-bl-title').nth(ROW_B).click()
 await sleep(400)
 const afterSwitch = await dialog.boundingBox()
 check('F', 'trocar o item mantém a posição', Math.round(afterSwitch.x) === Math.round(after.x), `${after.x} → ${afterSwitch.x}`)
 await page.keyboard.press('Escape')
 await sleep(200)
-await page.locator('.is-side .scrum-bl-title').nth(3).click()
+await page.locator('.is-side .scrum-bl-title').nth(ROW_A).click()
 await sleep(400)
 const reopened = await dialog.boundingBox()
 check('F', 'fechar e reabrir mantém a posição', Math.round(reopened.x) === Math.round(after.x), `${reopened.x}`)
@@ -166,7 +188,7 @@ check('F', '⌖ Centralizar → centrado e modal', Math.abs((centered.x + center
 await page.mouse.click(20, 450)
 await sleep(300)
 check('F', 'clique no backdrop fecha (modal de volta)', (await page.locator('.scrum-wi').count()) === 0)
-await page.locator('.is-side .scrum-bl-title').nth(3).click()
+await page.locator('.is-side .scrum-bl-title').nth(ROW_A).click()
 await sleep(300)
 const hb3 = await head.boundingBox()
 await page.mouse.move(hb3.x + 40, hb3.y + hb3.height / 2)
@@ -259,25 +281,23 @@ await sleep(1000)
 check(6, '▦ (reopen) → volta', (await sideWidth()) > 0)
 await openSession(SESSION)
 
-// (7) theme in the column flips the tab too.
+// (7) theme in the column persists (page-level switch) and survives a reopen.
 await capsule().click().catch(() => {})
 await sleep(800)
 if ((await sideWidth()) === 0) { await capsule().click(); await sleep(800) }
 await page.locator('.is-side .scrum-tab[title="Tema escuro"]').click()
 await sleep(200)
-await page.getByRole('tab', { name: '▦ SCRUM' }).click().catch(async () => { await page.locator('button:has-text("▦ SCRUM")').nth(1).click() })
-await sleep(800)
 const modes = await page.locator('.scrum-view').evaluateAll(els => els.map(e => e.getAttribute('data-color-mode')))
-check(7, '🌙 na coluna escurece a aba também', modes.length === 2 && modes.every(m => m === 'dark'), JSON.stringify(modes))
-await page.locator('.scrum-view.is-tab .scrum-tab[title="Tema claro"]').click()
+check(7, '🌙 escurece a coluna (único ponto de montagem)', modes.length === 1 && modes[0] === 'dark', JSON.stringify(modes))
+await page.locator('.is-side .scrum-tab[title="Tema claro"]').click()
 await sleep(200)
 
-// (9) the tab's «⇥ Ao lado» state and title.
-const aoLado = page.locator('.scrum-view.is-tab .scrum-tab', { hasText: 'Ao lado' })
-check(9, '«⇥ Ao lado» ligado com title de fechar', (await aoLado.evaluate(el => el.classList.contains('is-on'))) && (await aoLado.getAttribute('title')) === 'Fechar a coluna lateral')
-await aoLado.click()
+// (9) v0.23: no ▦ SCRUM tab in the conversation view ring — the capsule is the only trigger.
+check(9, 'sem aba ▦ SCRUM no anel de views', (await page.getByRole('tab', { name: '▦ SCRUM' }).count()) === 0 && (await page.locator('.scrum-view.is-tab').count()) === 0)
+check(9, 'uma única cápsula «▦ SCRUM» (cabeçalho da sessão)', (await page.locator('button:has-text("▦ SCRUM")').count()) === 1)
+await capsule().click()
 await sleep(900)
-check(9, '«⇥ Ao lado» fecha e vira «Abrir ao lado»', (await sideWidth()) === 0 && (await aoLado.getAttribute('title')) === 'Abrir ao lado')
+check(9, 'cápsula fecha e vira «Abrir ao lado»', (await sideWidth()) === 0 && (await capsule().getAttribute('title')) === 'Abrir ao lado')
 
 // (10) reload → off.
 await capsule().click()

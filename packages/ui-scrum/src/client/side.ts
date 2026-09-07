@@ -126,19 +126,15 @@ export function sideTitle(state: SideState): string {
   return TITLES[nextSideAction(state)]
 }
 
-/** Where the panel is mounted. */
-export type PanelMode = 'tab' | 'side'
-
 /**
- * Whether the panel should fetch and poll (R4): always in the tab (the ring
- * mounts only the active view), only at a positive rendered width in the
- * column (closed = mounted at 0px).
- * @param mode - mount point.
- * @param width - observed width in px (column only).
+ * Whether the panel should fetch and poll (R4): only at a positive rendered
+ * width in the column (closed = mounted at 0px). Until v0.23 a `mode`
+ * argument let the conversation-view tab poll while mounted; the tab is gone.
+ * @param width - observed width in px.
  * @returns true to poll.
  */
-export function pollGate(mode: PanelMode, width: number): boolean {
-  return mode === 'tab' || width > 0
+export function pollGate(width: number): boolean {
+  return width > 0
 }
 
 /** localStorage key persisting the chosen theme (same value since v0.10). */
