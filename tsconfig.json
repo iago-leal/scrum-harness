@@ -23,6 +23,9 @@
       "path": "packages/context-scrum"
     },
     {
+      "path": "packages/notify-scrum"
+    },
+    {
       "path": "packages/test-support"
     }
   ]

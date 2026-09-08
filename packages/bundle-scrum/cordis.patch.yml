@@ -21,6 +21,12 @@
     - id: context-scrum
       name: '@scrum-harness/context-scrum'
 
+    # Off-screen notice: waits for agents and turns the three moments that
+    # block on the human (pending approval, question, end of turn) into a
+    # macOS banner. Silent on every other platform.
+    - id: notify-scrum
+      name: '@scrum-harness/notify-scrum'
+
     - id: scrum-api
       name: '@scrum-harness/scrum-api'
 

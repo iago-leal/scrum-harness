@@ -1,49 +1,74 @@
 ---
 file: RULES.md
 reviewer: claude (subagent, revisor adversarial)
-reviewed_version: 5
-reviewed_digest: "21433beb"
+reviewed_version: 8
+reviewed_digest: "08a6beca"
 verdict: approved
-round: 5
+round: 8
 findings: { high: 0, medium: 0, low: 0 }
 ---
-# Revisão adversarial — specs/RULES.md v5 (digest 21433beb) — rodada 5, de fechamento
+# Revisão adversarial — specs/RULES.md v8 (digest 08a6beca) — rodada 8, fechamento
 
 ## Método
-Digest recalculado sobre o corpo trimado (sha1, 8 hex, `packages/scrum-domain/src/specs.ts:298-299` `digestOf(parsed.body.trim())`) = `21433beb` — confere com o brief. Frontmatter na linha 1: `title`/`purpose` entre aspas duplas, `version: 5` nu, `status: draft`, `owner: domain`; seções Domínio / Segurança / Performance / Compliance / Ver também presentes. Contagem mecânica dos ids no início de linha (`^(R|S|P|C)\d+\.`): **50 ocorrências, 50 únicos** (R1–R35, S1–S5, P1–P5, C1–C5), nenhum duplicado, nenhum renumerado. `git diff -- specs/RULES.md` (v3 commitada `4bd927d`, blob `711ae1c` → v5 no disco `5733f65`): 4 linhas removidas, 4 inseridas — frontmatter (`version`, `status`), R26 e R29; **nenhuma outra linha mudou**. Textos de M1 (R26) e de L1+L2 (R29) da rodada 4 comparados **byte a byte** com a v5 por script: ambos contidos literalmente. R26 conferido contra `packages/scrum-domain/src/contracts.ts:311` (`ISO_DATE`), `:322` (`z.string().refine(ISO_DATE && Date.parse finito)`; o brief cita `:310-311` — o arquivo deslocou, o conteúdo é o mesmo), `:82-88` (mensagem para número nu em `validated_at`), `packages/scrum-domain/src/frontmatter.ts:123-130` (`parseValue`) e a suite (`packages/scrum-domain/tests/contracts.spec.ts:229-234`, `scrum-domain.spec.ts:868`, `:1428`). R29 conferido contra `specs/PRD.md` v5 `approved` (l.14, l.45, l.50), `specs/GLOSSARY.md` v3 (l.66 «Carimbo humano», l.98 «"aprovar" pelo agente»), R30, R31 e R34 desta spec. Somente leitura; nenhum instalador, build ou suite rodados.
 
-## Absorção da rodada 4
-| Achado r4 | Absorvido? | Linha v5 / citação | Evidência |
-|---|---|---|---|
-| **M1** — R26 «aspas obrigatórias só quando só-dígitos» insinuava que só-dígitos entre aspas passa | **Sim, verbatim** | l.38: «`validated_at` string ISO-8601 estendida (`AAAA-MM-DD` ou data-hora), que o parser da casa lê como string com ou sem aspas; um valor só-dígitos é recusado de qualquer forma (nu, o parser o lê como número)» | `contracts.ts:311` exige `^\d{4}-\d{2}-\d{2}(T…)?$` (forma estendida, com hífens); `:322` `z.string().refine` — string, sem exigir aspas; `frontmatter.ts:123-125` aspas → string, `:129` só-dígitos nu → `Number`, `:130` resto → string. Logo `"2026"` (aspas) vira string e cai no `refine` (mesma mensagem, `:322`); `2026` nu vira número e cai em `:88`. Provas: `contracts.spec.ts:231` (`2026` nu recusado), `:232` (data-hora entre aspas ok), `:233` (data-hora nua ok), `scrum-domain.spec.ts:868` (`2026-09-02` nua ok). A frase v5 é exata nas três afirmações: forma estendida, aspas indiferentes para valor válido, só-dígitos recusado sempre. |
-| **L1** — R29 não citava R30 como razão do «só `status`» | **Sim, verbatim** | l.41: «e o agente grava só `status` (fora do corpo: o digest de R30 não muda e a revisão segue `current`)» | `specs.ts:298-299`: digest = sha1 do `body` trimado, frontmatter fora; trocar `status: draft → approved` não altera o digest, a revisão com `reviewed_version`/`reviewed_digest` iguais continua `current` (R30, R33). |
-| **L2** — R29 longa (parêntese final de três cláusulas), corte proposto | **Sim, verbatim + duas inserções** | l.41 = texto proposto em L2 + o parêntese de L1 + «, para specs,» antes de «a mensagem de commit» | A inserção «para specs» corrige a elipse que o próprio L2 apontou (requisitos de componente vivem no storage fora do git: a única evidência é a conversa) sem desviar do PRD l.50, que fala de git só para specs. **Nota honesta de medida**: o L2 anunciou «≈ 520 chars», mas o texto proposto tem 589; com L1 (+70) e «, para specs,» (+13) a v5 fica em **672** — não é mais curta que a v4 em caracteres. O ganho é estrutural: a decisão (duas formas) vem primeiro, a ação do agente e a razão (R30) logo em seguida, as exclusões (`;`) depois, a marca de convenção por último. Continua **uma frase**, cada cláusula verificável à mão. Não é achado: o owner absorveu exatamente o pedido. |
+**Digest.** Recalculado do disco, não aceito do mandato. Reli `packages/scrum-domain/src/contracts.ts:51-53` — `digestOf` = `createHash('sha1').update(body.trim()).digest('hex').slice(0, 8)`, sobre o corpo **sem** o frontmatter. Fronteira reconferida nesta rodada: `specs/RULES.md:7` é o `---` de fecho, `:8` é `# Regras invariantes`; o arquivo tem 79 linhas. `sed -n '8,79p' specs/RULES.md | perl -0777 -pe 's/\A\s+|\s+\z//g' | shasum | cut -c1-8` → **`08a6beca`**. Confere com o mandato. Frontmatter lido: `version: 8`, `status: draft`, `owner: domain` — o `draft` é o correto (R29/R30: toda versão nova nasce `draft` até o carimbo humano).
 
-## Diff v3→v5
-- **Frontmatter**: `version: 3 → 5`, `status: approved → draft`. Correto — nova versão nasce `draft` (R29, R32); o carimbo é humano.
-- **R26** (l.38): só a cláusula de `validated_at` mudou (v3 «ISO-8601 entre aspas», exigência falsa; v5 texto de M1). Aritmética da suite, `typecheck: clean`, orçamento, pior rodada, as-built vence — idênticos à v3 e ainda provados por `contracts.spec.ts` (suite, budget, runs) e `scrum-domain.spec.ts`.
-- **R29** (l.41): de «é humano: o quadro o lê e nunca o escreve» (v3) para o modelo em duas formas do PRD v5. **Fiel ao PRD v5** cláusula a cláusula: duas formas (l.14), pergunta explícita nomeando arquivo ou componente + versão + digest (l.14, l.45), revisão `current` a 0 HIGH (l.14, l.45 «sem HIGH»), «grava só o campo `status`» (l.14), pedido vago não é carimbo (l.50), sem verificação de identidade (l.50), evidência na conversa e na mensagem de commit (l.50), quadro lê e nunca escreve (l.14, l.45). **Idêntico em substância ao GLOSSARY v3** (l.66, l.98). **Coerente com R30** (agora citado explicitamente), **R31** (quem grava é o agente com ferramenta de arquivo ou `scrum_item_update`, nunca o quadro; `specs.ts` só lê), **R34** (revisão preservada → o brief do sucessor abre sem nova rodada). Marca «convenção da casa, não gate» mantida; nada no Model muda.
-- **Tudo o mais**: 48 regras, preâmbulo e «Ver também» byte-idênticos à v3 aprovada (diff confirma). 50 ids intactos, nenhum renumerado.
+**Como isolei o diff v7→v8.** O HEAD é a v5 (`git show HEAD:specs/RULES.md` → `version: 5`, `status: approved`, 76 linhas), e nem a v6 nem a v7 foram commitadas, então `git diff` mostra v5→v8 somadas. Não reconstruí a v7 a partir do parecer da rodada 7 (o texto proposto num parecer não é necessariamente o gravado); repeti a **prova estrutural** que já usei na rodada 7, que não depende de ter a versão anterior em mãos:
 
-## HIGH
-Nenhum.
+1. Removi da v8 as três linhas que a v6 acrescentou (as que começam em `R36.`, `R37.`, `C6.`) e comparei o resto com o v5 do HEAD, linha a linha. Resultado: **76 linhas contra 76, e exatamente 2 diferenças** — linha 4 `version: 5→8` e linha 5 `status: approved→draft`. Nenhuma outra. Isso prova que v8 = v5 + {duas linhas de frontmatter} + {R36, R37, C6}, e **fecha as 51 linhas de R1–R35, S1–S5, P1–P5, C1–C5 como byte a byte idênticas à v5 já aprovada**.
+2. Restam, por subtração, as três linhas de conteúdo. **R36** (`:48`) e **C6** (`:71`) são literalmente as que a rodada 7 transcreveu por inteiro em «Sections I would keep» e no corpo do parecer — conferi palavra a palavra, inclusive «precedente parcial» e o remate «(C5)» em R36, e em C6 «98 testes no fechamento, 100 depois dos dois testes de fiação da correção» com a marca «(convenção da casa, não gate)». **Nenhuma das duas foi tocada.** Sobra R37 como a única linha de conteúdo mudada, mais `version`: exatamente as duas mudanças que o mandato declara.
+3. Dentro de R37, localizei a mudança por busca direta: `grep -n 'setup-profile\.sh:[0-9]' specs/RULES.md` **não casa em lugar nenhum do arquivo** (exit 1), e o fragmento `` o `if [ -d … ]` de `setup-profile.sh` pula em silêncio `` casa exatamente. O ponteiro numérico saiu, a âncora nominal entrou, e nenhum outro `arquivo:linha` de `setup-profile.sh` sobrou na spec.
+4. Contagem de ids no início de linha: **53 ocorrências, 53 únicas** (R1–R37, S1–S5, P1–P5, C1–C6). Nenhuma duplicata, nenhum id renumerado.
 
-## MEDIUM
-Nenhum.
+**Fatos contra o disco.** `scripts/setup-profile.sh` inteiro, `packages/bundle-scrum/cordis.patch.yml`, `packages/bundle-scrum/package.json:19-27`.
 
-## LOW
-Nenhum.
+**Suíte.** `node node_modules/vitest/vitest.mjs run packages/notify-scrum/` nesta máquina → **3 arquivos, 100 testes, 100 passed**, 601 ms (`notifier.spec.ts` 26, `model.spec.ts` 42, `plugin.spec.ts` 32). Bate com o número que C6 usa. Não rodei instalador nem build; nenhum arquivo foi modificado além deste parecer. Os 2 `it` vermelhos de `repo-specs.spec.ts` são o vermelho declarado de C4 e não os conto como achado, conforme o mandato.
+
+## Absorção da rodada 7
+
+### M1 — absorvido, com o texto proposto, à letra
+
+A rodada 7 marcou MEDIUM que R37 localizava o mecanismo por `` (`setup-profile.sh:62`, `if [ -d … ]` pula em silêncio) ``, quando a linha 62 do script é `ui-scrum) name="ui" ;;` — um ramo do `case`, sem relação com a existência do diretório — e o `if` está na 65. A citação errava para uma linha real e errada, que é o que a fazia MEDIUM e não LOW.
+
+A v8 adotou a **mudança concreta** que o parecer propôs, sem variação. R37 (`specs/RULES.md:49`) agora diz `` (o `if [ -d … ]` de `setup-profile.sh` pula em silêncio) ``. Confrontei com o proposto na rodada 7 (`RULES.review.md`, M1 «Mudança concreta»): é o mesmo texto, caractere por caractere. O número morreu; a âncora de conteúdo, que é imune a renumeração, ficou. É o remédio que `AGENTS.md` «Regras de output › Citação posicional envelhece» manda e que a v8 daquele arquivo aplicou à mesma classe de erro.
+
+**A âncora é única e correta no disco** — o ponto 3 do mandato, verificado em três frentes:
+
+- **Existe, e é única como comando.** `grep -nE '^[[:space:]]*if \[ -d' scripts/setup-profile.sh` → **uma só ocorrência**, `:65` — `if [ -d "$REPO/packages/$pkg" ]; then`. Um `grep` mais frouxo (`if \[ -d`) traz duas linhas, mas a outra é `:52`, dentro do bloco de comentário `:51-56`, que **descreve** esse mesmo `if` («the `if [ -d ]` below skips it without a word»). Não é um segundo `if`: é a prosa que aponta para ele. Logo não há ambiguidade — a âncora localiza um único mecanismo, e o comentário confirma qual.
+- **É o `if` certo.** O teste é `-d "$REPO/packages/$pkg"`, isto é, a existência do diretório do pacote, exatamente o que R37 descreve com «o link do profile só nasce se o diretório existe na lista».
+- **«Pula em silêncio» bate com o código.** O corpo é `:65-67` — `ln -sfn …` e `fi`, **sem `else`**. Varri o script inteiro: `grep -nE 'else|echo .*(warn|WARN|missing|skip)'` **não casa em lugar nenhum** (exit 1). Não há `else`, não há aviso, não há `set -u` que o pegue. Um pacote fora da lista, ou com diretório ausente, some sem uma palavra. O silêncio é do script, literalmente, como a regra diz.
+
+Absorvido. O M1 está fechado, e a regra ficou mais robusta do que estava antes da rodada 6: já não há ponteiro nenhum em R37 que possa envelhecer com a próxima edição do script.
+
+### Nada mais mudou — verificado, não aceito
+
+O ponto 2 do mandato. A prova estrutural do «Método» é positiva, não uma ausência de suspeita: v8 menos {R36, R37, C6} **é** o v5 do HEAD, salvo `version` e `status`. Isso cobre R1–R35, S1–S5, P1–P5 e C1–C5 de uma vez, byte a byte, sem eu precisar relê-los um a um — e é a razão pela qual não os reabro. R36 e C6 saem por comparação literal com a transcrição integral da rodada 7. A mudança é a de dois tokens em R37, mais `version: 7 → 8`. **Exatamente as duas coisas declaradas, e nada além.**
+
+## Contradição nova — procurada, não encontrada
+
+O ponto 4. A v8 apagou um ponteiro; apagar não pode tornar verdadeira uma proposição falsa nem falsa uma verdadeira, mas conferi o que o apagamento poderia ter quebrado:
+
+- **O resto de R37 continua verdadeiro no disco.** Reconferi as três afirmações que sobraram, porque a frase foi reescrita ao redor delas: os sete pacotes do patch (`cordis.patch.yml` → domain, tool-scrum, command-scrum, context-scrum, notify-scrum, scrum-api, ui) estão todos nas `dependencies` de `packages/bundle-scrum/package.json:19-27`; e o remate do superconjunto é exato — comparei os dois conjuntos ordenados por `comm`, e o `for pkg in` (`:57`) traduzido dá nove nomes, sendo a diferença **precisamente `{bundle, probe}`**, os dois que a regra nomeia, com **conjunto vazio** na direção contrária (nada no patch falta ao script). «Pode conter mais, nunca menos» é literalmente o estado do disco.
+- **Comentário do script × regra.** O comentário `:51-56` continua dizendo a mesma mecânica que R37, com a mesma citação do harness (`assertEntriesLoaded: "plugin(s) failed to load: <name>"`) e ainda apontando para a regra pelo id. A v8 não tocou o script, e o comentário não usa número de linha para se referir ao `if` — diz «the `if [ -d ]` **below**». Regra e comentário convergiram na mesma solução de ancoragem; não divergem.
+- **R30 e o digest.** A mudança é no corpo, então o digest mudou e a revisão anterior ficou `stale` — que é exatamente o que R30 manda e a razão desta rodada existir. Coerente, não contraditório.
+- **R29/C4 e o `status: draft`.** A v8 nasce `draft`, como R29 exige, e é isso que mantém o `it` de `repo-specs.spec.ts` vermelho até o carimbo (C4, e o mandato o declara esperado). A spec está em conformidade com as próprias regras que ela escreve.
+- **Vizinhas de R37.** R31/S3 (o quadro nunca escreve `specs/`; a sonda lê só `specs/`): R37 fala de `packages/` e `scripts/`, assuntos disjuntos. R23/R26 (matriz `traces:`): R37 não cria obrigação de trace, e os caminhos que nomeia são relativos ao workspace, no formato que R23 exige. R1 («nenhuma regra fora do Model»): R37 é regra de fiação de pacotes, não de decisão de domínio. R36 × R37: uma diz onde a regra de um plugin mora, a outra como o pacote chega ao profile — reforço, não colisão. C1 × C6 e R28/P1/R26 × C6: inalterados desde a rodada 7, e C6 não foi tocada.
+
+Nenhuma contradição nova. Nenhuma regra anterior tornada falsa — a prova estrutural garante que nenhuma delas mudou, e a única linha que mudou perdeu uma afirmação errada sem ganhar nenhuma.
 
 ## Sections I would keep
-- **R26 v5** — descreve exatamente o que `validationMetaSchema` lê (`contracts.ts:311`, `:322`) e como `parseValue` chega lá (`frontmatter.ts:123-130`); não afirma exigência que o código não faz nem esconde recusa que faz. Pronta para o CT «`validated_at: "2026"` é recusado» que a TESTS_SPEC pode acrescentar sem contradizer a regra.
-- **R29 v5** — transcreve PRD v5 e GLOSSARY v3 sem afrouxar nem inventar condição; a citação de R30 fecha a única lacuna de raciocínio da v4; «para specs» é mais preciso que o PRD sem contrariá-lo.
-- **R30–R34, S1–S5, P1–P5, C1–C5 e o preâmbulo** — inalterados desde a v3 carimbada; nada nesta rodada os afeta.
 
-## Observações fora do escopo (para os owners; não são achados desta spec)
-1. **`specs/AGENTS.md` v2** (draft, task-186 em andamento) ainda diz «O agente nunca carimba, nem quando o humano … responde «Aprovar»» e classifica a segunda forma como «desvio a corrigir» — contradiz PRD v5, GLOSSARY v3 e R29 v5. Precisa de v3 pelo Agents Steward antes do carimbo (C4 exige AGENTS `approved`). Repetido da r4; permanece.
-2. **`contracts.ts:322`** — a mensagem «must be a quoted ISO-8601 date» sai para qualquer string inválida (`Jan 5`, `contracts.spec.ts:230`); «quoted» ali é a origem histórica da frase falsa da v3. Ajuste de texto opcional no Model.
-3. **`specs/TESTS_SPEC.md` CT-035 e «Dados de teste»** carregam a imprecisão que M1 corrigiu aqui; proposta ao Test Agent na próxima versão. Repetido da r4.
-4. O brief desta rodada cita `contracts.ts:310-311`; no disco `ISO_DATE` está em `:311` e o `refine` em `:322`. Só deslocamento de linhas, sem mudança de conteúdo.
+- **R37 inteira** (`:49`), agora sem ressalva. A regra faz quatro coisas certas numa linha só: manda o invariante (os três lugares em sincronia), explica o mecanismo real pelo qual a violação escapa (o `if` que pula calado, e o boot que só reclama depois de o profile ser regerado), fecha a porta da leitura errada (superconjunto, nunca subconjunto) e exige a **forma** do teste — derivar a lista do próprio patch, nunca repetir à mão, que é o que faz um pacote novo quebrar o teste sem ninguém lembrar de nada. Tudo conferido no disco nesta rodada. Com o número fora, é a única citação da spec a um script vivo que não envelhece na próxima edição dele.
+- **R36, intacta** (`:48`). Não tocada pela v8 — verificado por comparação literal — e já verificada afirmação por afirmação contra o código na rodada 6, aprovada sem ressalva. Não a reabro: o mandato a exclui e nada na v8 a torna falsa. Registro que o `100 passed` desta rodada continua cobrindo os testes que a sustentam.
+- **C6 inteira** (`:71`). Não tocada. Os dois números continuam datados e corretos — «98 no fechamento» é histórico marcado como tal, e o 100 bate com a medida desta rodada. A marca «(convenção da casa, não gate)» continua necessária, porque o Model não tem como verificar carga no harness real.
+- **Tudo o mais, R1–R35, S1–S5, P1–P5, C1–C5** (`:13-47`, `:52-70`). Não reaberto, conforme o mandato, e com base positiva para não reabrir: a prova estrutural mostra que a v8 não os tocou em um único byte, e que são os mesmos que a v5 carimbada já trazia.
 
 ## Veredito
-**approved** — 0 HIGH, 0 MEDIUM, 0 LOW. A v5 muda exatamente o que o brief diz (frontmatter, R26, R29), absorve M1, L1 e L2 com os textos propostos, preserva os 50 ids, é exata contra o código em R26 e fiel ao PRD v5 / GLOSSARY v3 em R29. Revisão `current` sobre v5/21433beb: pronta para a pergunta de carimbo ao humano.
+
+**approved** — 0 HIGH, 0 MEDIUM, 0 LOW.
+
+O único achado da rodada 7 foi absorvido com o texto que o parecer propôs, à letra: o `setup-profile.sh:62` saiu e ficou a âncora nominal `` o `if [ -d … ]` de `setup-profile.sh` ``. Não tomei a absorção da palavra do autor — verifiquei que **não existe mais nenhum `setup-profile.sh:<n>` na spec**, e que a âncora que ficou é única no script como comando (`:65`, uma só ocorrência; a segunda casa de `grep` é o comentário que a descreve), testa de fato a existência do diretório, e pula **sem `else` e sem aviso algum** — o script inteiro não tem um `else` sequer. «Pula em silêncio» é descrição literal do código.
+
+O diff é as duas coisas declaradas e nada mais, e isso está provado, não assumido: a v8 menos as três linhas da v6 é o v5 do HEAD exceto por `version` e `status`, o que fecha R1–R35, S1–S5, P1–P5 e C1–C5 como intocados byte a byte; R36 e C6 são literalmente as que a rodada 7 transcreveu; sobra R37. 53 ids, 53 únicos, nenhum renumerado. Nenhuma contradição nova: apagar um ponteiro falso não podia criar uma, e conferi assim mesmo as vizinhas e o resto de R37 — os sete pacotes do patch estão nas `dependencies`, e o excedente do script é exatamente `{bundle-scrum, scrum-probe}`, com nada faltando na direção contrária.
+
+Três rodadas trataram esta spec (6, 7, 8) e cada achado morreu no disco, não no papel: o HIGH da cláusula que invertia o sinal do harness, o MEDIUM do número de testes sem data, o LOW do superconjunto, o MEDIUM do ponteiro derivado. Não invento um quinto para justificar a rodada. **A v8 está pronta para o carimbo humano** — `status: draft` até lá, como R29 manda, e é esse `draft` que mantém o `it` de C4 no vermelho declarado que o mandato já dá por esperado.

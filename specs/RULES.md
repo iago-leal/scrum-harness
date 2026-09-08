@@ -1,7 +1,7 @@
 ---
 title: "Regras invariantes — scrum-harness"
 purpose: "As regras que o código impõe hoje, uma por linha e testável: domínio (hierarquia, sprint, espiral, contratos, specs), segurança, performance e compliance; convenções da casa marcadas como tal."
-version: 5
+version: 8
 status: approved
 owner: domain
 ---
@@ -45,6 +45,8 @@ R32. Uma spec é válida com frontmatter na linha 1 trazendo `title`, `purpose`,
 R33. A revisão de spec tem um estado por precedência `none > invalid > stale > needs-revision > current`; spec `missing` ou `invalid` torna a revisão stale sem comparar versão ou digest.
 R34. O brief de autor é recusado (`spec-order`) enquanto um predecessor direto não estiver `approved` com revisão `current`; o brief de revisor é recusado (`spec-review-brief`) só para spec `missing` ou `invalid` — a ordem, nele, só avisa; o spec set é `complete` com PRD, RULES e API_SPEC `approved` e nenhum arquivo do catálogo inválido.
 R35. A mídia do quadro está em `version: 1` e evolui por migração no parse, sem bump: componente sem `phase` carrega em `requirements` (`validation` se `done`) com `phaseLog: []`; tarefa sem `kind` deriva o kind do prefixo `[test]`/`[code]` pelo mesmo `splitKindPrefix` do serviço (total: título só-prefixo fica `other` intacto); sprint com `releaseId` legado vira `releaseIds: [id]`. Toda migração nova segue esse padrão e carrega mídia antiga intacta (convenção da casa, não gate).
+R36. Um plugin cujas regras não são do domínio SCRUM carrega Model próprio dentro do pacote (`packages/notify-scrum/src/model.ts`; precedente parcial: a View pura de `packages/context-scrum/src/snapshot.ts`), e então: o Model é puro e total, sem E/S, relógio (`Date.now()`), ambiente (`process.env`) nem estado entre chamadas, com todo insumo variável chegando pelo contexto; o efeito é injetável (`Notifier`), para o teste observar o comando em vez do efeito real; o plugin (`plugin.ts`) só traduz evento → contexto → efeito e não decide nada; e a divisão vai declarada no design (C5).
+R37. Todo pacote nomeado em `packages/bundle-scrum/cordis.patch.yml` está nas `dependencies` de `packages/bundle-scrum/package.json` e na lista `for pkg in …` de `scripts/setup-profile.sh` — o link do profile só nasce se o diretório existe na lista (o `if [ -d … ]` de `setup-profile.sh` pula em silêncio), e um pacote que ficou de fora não é linkado, de modo que a linha do patch ou some do profile em uso ou, uma vez regerado, derruba o boot (`assertEntriesLoaded`: `plugin(s) failed to load: <nome>`) —, provado por teste que deriva a lista do próprio patch, nunca por lista repetida à mão; a lista do script pode conter mais (`bundle-scrum`, `scrum-probe`, que não são linhas do patch), nunca menos.
 
 ## Segurança
 S1. Na API HTTP (`scrum-api`), mutação só com `Content-Type: application/json` (415 `unsupported-media-type` antes do dispatch) e corpo ≤ 262 144 bytes (256 KiB): acima, a conexão é destruída; a tool e o comando `/scrum` não passam por ela.
@@ -66,6 +68,7 @@ C2. Toda sprint encerrada a partir da spr-11 tem planning, review e retrospectiv
 C3. A linha `Higiene:` do snapshot está vazia no encerramento de cada sprint: 0 tarefas abertas sem descrição, 0 títulos acima do limite (convenção da casa, não gate).
 C4. Critério de aceitação da rel-21, imposto pelo teste `repo-specs.spec.ts` (vermelho até ser verdade, não gate do Model): o `specs/` deste repositório tem PRD, GLOSSARY, RULES, ARCHITECTURE, API_SPEC, TESTS_SPEC e AGENTS `approved` com revisão `current`, `summary.complete`, nenhum arquivo do catálogo `invalid`, nenhum `unknown`, nenhuma revisão desconhecida, e todo arquivo presente com revisão `current` (`reviewed = present`).
 C5. Toda revisão de desenho confere a divisão M/V/C declarada e lista as affordances que espelham uma regra do Model (contador de título, cerca do frontmatter) (convenção da casa, não gate).
+C6. Componente que entrega plugin só fecha `done` depois de o plugin ter sido observado carregando no harness real: suíte verde não prova carga (o comp-68 fechou com a suíte de `notify-scrum` verde — 98 testes no fechamento, 100 depois dos dois testes de fiação da correção — e o aviso nunca tocou em uso, porque o pacote faltava nas `dependencies` do bundle e no `setup-profile.sh`) (convenção da casa, não gate).
 
 ## Ver também
 - ARCHITECTURE.md — as decisões (ADRs) que realizam estas regras: MVC da casa, um quadro por workspace, contratos como objetos do Model.

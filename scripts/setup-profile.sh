@@ -48,7 +48,13 @@ cat > "$PROFILE/cordis.patch.yml" <<PATCH
     path: $REAL_DSH_HOME/.credentials.yaml
 PATCH
 
-for pkg in bundle-scrum scrum-domain scrum-probe tool-scrum command-scrum scrum-api ui-scrum; do
+# Every workspace package the bundle patch names must be resolvable from the
+# profile. A package missing from this list is never linked, and the `if [ -d ]`
+# below skips it without a word: the patch row then either vanishes from the
+# profile in use or, once regenerated, aborts the boot by name
+# (assertEntriesLoaded: "plugin(s) failed to load: <name>"). Keep this list in
+# step with packages/bundle-scrum/cordis.patch.yml — RULES.md R37.
+for pkg in bundle-scrum scrum-domain scrum-probe tool-scrum command-scrum context-scrum notify-scrum scrum-api ui-scrum; do
   case "$pkg" in
     bundle-scrum) name="bundle" ;;
     scrum-domain) name="domain" ;;
