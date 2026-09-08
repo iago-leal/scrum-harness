@@ -27,7 +27,13 @@ const SHOTS = args.shots ?? '/tmp/e2e-side'
 mkdirSync(SHOTS, { recursive: true })
 
 const require = createRequire(import.meta.url)
-const { chromium } = require('<deepseek-harness>/node_modules/.pnpm/playwright@1.61.1/node_modules/playwright')
+// Playwright is borrowed from a deepseek-harness checkout (no install here).
+// Point DSH_CHECKOUT (or --playwright) at yours; defaults to a sibling checkout.
+const PLAYWRIGHT = args.playwright
+  ?? process.env.DSH_PLAYWRIGHT
+  ?? join(process.env.DSH_CHECKOUT ?? join(process.env.HOME ?? '', 'HARNESS', 'deepseek-harness'),
+          'node_modules/.pnpm/playwright@1.61.1/node_modules/playwright')
+const { chromium } = require(PLAYWRIGHT)
 
 const results = []
 const check = (step, name, ok, detail = '') => {
