@@ -1,6 +1,6 @@
 ---
 file: TESTS_SPEC.md
-reviewer: subagent (revisor adversarial, <modelo>)
+reviewer: subagent (revisor adversarial)
 reviewed_version: 5
 reviewed_digest: "d47ea203"
 verdict: approved

@@ -1,6 +1,6 @@
 ---
 file: PRD.md
-reviewer: subagent adversarial reviewer (<modelo>)
+reviewer: subagent adversarial reviewer
 reviewed_version: 5
 reviewed_digest: "8099e2d5"
 verdict: approved

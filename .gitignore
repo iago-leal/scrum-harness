@@ -16,3 +16,7 @@ lib/
 .dsh-home/profiles/scrum/cordis.patch.yml
 # Stray file produced by a misredirected `npm config` invocation.
 (same as "user" config, ignored)
+# Private reading notes: digests of third-party books, kept out of the
+# published repository for copyright reasons.
+.private-notes/
+docs/book-digests/

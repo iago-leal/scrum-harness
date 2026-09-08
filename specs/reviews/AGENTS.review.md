@@ -1,6 +1,6 @@
 ---
 file: AGENTS.md
-reviewer: subagent (revisor adversarial, <modelo>)
+reviewer: subagent (revisor adversarial)
 reviewed_version: 4
 reviewed_digest: "b3bfef05"
 verdict: approved

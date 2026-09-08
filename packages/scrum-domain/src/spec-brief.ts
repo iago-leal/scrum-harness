@@ -2,9 +2,9 @@
  * View of the pipeline of the agents (v0.25, comp-60): the two briefs the
  * tools print — the author's (`formatSpecBrief`: role, inputs, current
  * version, template, house conventions, response format) and the reviewer's
- * (`formatSpecReviewBrief`). The roles are Table 6.4 of the chapter; the
- * templates are the six skeletons of "Por dentro de cada arquivo" with the
- * accents the book's typography lost restored, and the nine others by
+ * (`formatSpecReviewBrief`). The role catalog follows the agent chain
+ * described in the reference book (see README); the templates are house
+ * section skeletons, six inspired by the book's and nine derived by
  * analogy. Text only: every decision was taken in `specs.ts`.
  * @module @scrum-harness/domain/spec-brief
  */
@@ -15,7 +15,7 @@ import type { SpecBriefData, SpecBriefPredecessor, SpecOwner, SpecReview, SpecRe
 /** Predecessor / current texts above this size are omitted from a brief (R6, R9a): the agent reads the file. */
 export const BRIEF_SPEC_LIMIT = 12_000
 
-/** Table 6.4 by owner; `agents` and `ops` are house roles (the chapter assigns them no agent). */
+/** The agent chain by owner; `agents` and `ops` are house roles (the book assigns them no agent). */
 export const SPEC_ROLES: Readonly<Record<SpecOwner, { agent: string; responsibility: string }>> = Object.freeze({
   product: { agent: 'Product Agent', responsibility: 'defines what must exist and for whom: the problem, the user, the success criteria — before any technical decision' },
   domain: { agent: 'Domain Analyst', responsibility: 'models the business domain: entities, relations and the invariant rules, each with a stable id' },
@@ -26,7 +26,7 @@ export const SPEC_ROLES: Readonly<Record<SpecOwner, { agent: string; responsibil
   ops: { agent: 'Ops/Docs (house role)', responsibility: 'keeps the operational backlog and the entry point of the spec set: overview, links, onboarding' },
 })
 
-/** The skeleton of each file: the six of the chapter verbatim (accents restored), the nine others by analogy. */
+/** The skeleton of each file: six inspired by the reference book's, the nine others by analogy. */
 export const SPEC_TEMPLATES: Readonly<Record<string, string>> = Object.freeze({
   'PRD.md': [
     '# PRD: <nome do produto>', '',

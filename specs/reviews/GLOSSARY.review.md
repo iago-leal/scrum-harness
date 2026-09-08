@@ -1,6 +1,6 @@
 ---
 file: GLOSSARY.md
-reviewer: <modelo> (subagente revisor adversarial)
+reviewer: subagente revisor adversarial
 reviewed_version: 3
 reviewed_digest: "cb29937a"
 verdict: approved

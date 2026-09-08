@@ -2,6 +2,7 @@
   "name": "scrum-harness",
   "private": true,
   "version": "0.1.0",
+  "license": "MIT",
   "description": "SCRUM process plugins for DeepSeek Harness: Release > Feature > Component > Task hierarchy, sprints, ceremonies, tools, commands and a web board",
   "type": "module",
   "workspaces": [
