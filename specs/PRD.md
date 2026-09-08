@@ -1,7 +1,7 @@
 ---
 title: "PRD — scrum-harness"
 purpose: "Por que o scrum-harness existe, para quem, e como medimos sucesso: o processo ágil (SCRUM + espiral) executável pelo agente, consultado e operado por humanos e persistido por workspace."
-version: 3
+version: 5
 status: approved
 owner: product
 ---
@@ -11,7 +11,7 @@ owner: product
 Fazer do processo ágil um contrato executável, não um hábito: um SCRUM com espiral de desenvolvimento por componente que o agente de IA opera por tools, que humanos **consultam** pelo comando `/scrum` e **operam** pelo quadro na GUI web do DeepSeek Harness, e que fica persistido fora das conversas, um quadro por workspace — para que o processo sobreviva à conversa que o criou.
 
 ## Persona alvo
-- **O desenvolvedor que trabalha com um agente de IA num repositório.** Usa o quadro várias vezes por dia, ao lado do chat: planeja releases e sprints, acompanha o Kanban, abre o work item form, carimba requisitos como `approved` no work item form e carimba specs editando o frontmatter em `specs/` (git); o quadro reflete os dois carimbos, nunca os escreve por conta própria. Quer que o plano, o histórico e as decisões existam quando a sessão acabar — e que sejam os mesmos vistos pelo agente, pelo `/scrum` e pela GUI.
+- **O desenvolvedor que trabalha com um agente de IA num repositório.** Usa o quadro várias vezes por dia, ao lado do chat: planeja releases e sprints, acompanha o Kanban, abre o work item form, carimba requisitos e specs como `approved` por decisão sua — editando ele mesmo o frontmatter (work item form para requisitos, `specs/` no git para specs) ou respondendo «aprovar» a uma pergunta explícita do agente que nomeia o arquivo ou componente, a versão e o digest de um texto cuja revisão `current` tem 0 HIGH, caso em que o agente grava só o campo `status`; o quadro reflete os carimbos de requisitos e de specs, nunca os escreve por conta própria. Quer que o plano, o histórico e as decisões existam quando a sessão acabar — e que sejam os mesmos vistos pelo agente, pelo `/scrum` e pela GUI.
 - **O próprio agente de IA que desenvolve o repositório.** Opera em todo turno: recebe o snapshot do quadro no 1º step, move tarefas ao começar e terminar, avança componentes pela espiral e escreve specs pelo pipeline. Precisa de contexto (o que está aberto, em que fase, o que falta) e de disciplina que não dependa de obediência ao prompt: gates que recusam com toda razão nomeada.
 
 ## Jobs to be done
@@ -42,12 +42,12 @@ Fazer do processo ágil um contrato executável, não um hábito: um SCRUM com e
 - Não ser multiusuário nem multi-tenant: um quadro por workspace, uma pessoa e seu agente.
 - Não ter backend em nuvem nem autenticação: o storage é local, servido pelo DSH da própria máquina.
 - Não substituir o git: o histórico de código e das specs é o git; o quadro guarda processo (fases, cerimônias, sprints), não diffs.
-- Não escrever specs pelo quadro: `specs/` é escrito pelos agentes e carimbado por humanos no frontmatter; o quadro só lê.
+- Não escrever specs pelo quadro: `specs/` é escrito pelos agentes e carimbado no frontmatter por decisão humana (o humano edita, ou responde «aprovar» a uma pergunta explícita que nomeia arquivo, versão e digest de um texto com revisão `current` sem HIGH); o quadro só lê.
 - Não estimar por tempo: estimativas são pontos de história; velocity e burndown derivam deles.
 
 ## Riscos conhecidos
 - A disciplina por gate melhora a qualidade sem sufocar o ritmo — hipótese não validada: o hotfix da v0.23 foi feito **fora** da espiral (sem componente, sem gate), e não há regra que impeça isso; hoje a espiral só disciplina o que nasce como componente.
-- O agente respeita "nunca carimbar `approved`": o carimbo é humano por convenção de tool e brief, não por verificação de identidade.
+- O agente respeita "nunca carimbar `approved` por conta própria": o carimbo é decisão humana por convenção de tool e brief — edição direta do humano, ou resposta explícita a uma pergunta que nomeia arquivo ou componente, versão e digest de um texto já revisado —, não por verificação de identidade; um pedido vago («pode seguir») não é carimbo, e nada impede um agente desobediente de gravar o campo; a evidência da segunda forma (a pergunta e a resposta) fica na conversa, que o quadro não persiste — no git os dois carimbos são indistinguíveis, salvo o que a mensagem de commit declarar.
 - `specs/` fica em sincronia com o código: nada detecta deriva silenciosa entre spec aprovada e implementação além da revisão adversarial.
 - O bundle do quadro (≈ 3,8 MB, dominado pelo mermaid) não pesa no boot da GUI — medido só em dogfood local.
 - Dependência de APIs internas do DeepSeek Harness (slot system, coluna `details`, `ctx.layout`, waterfall `agent/pre-step`) que podem mudar sem aviso.

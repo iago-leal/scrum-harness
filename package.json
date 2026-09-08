@@ -8,10 +8,10 @@
     "packages/*"
   ],
   "scripts": {
-    "build": "tsc --build",
-    "clean": "tsc --build --clean",
-    "test": "vitest run",
-    "typecheck": "tsc --build --dry"
+    "build": "node node_modules/typescript/bin/tsc --build",
+    "clean": "node node_modules/typescript/bin/tsc --build --clean",
+    "test": "node node_modules/vitest/vitest.mjs run",
+    "typecheck": "node node_modules/typescript/bin/tsc --build"
   },
   "devDependencies": {
     "@deepseek-ai/cordis": "file:../deepseek-harness/vendor/cordis",

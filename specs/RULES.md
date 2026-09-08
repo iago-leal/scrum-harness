@@ -1,7 +1,7 @@
 ---
 title: "Regras invariantes — scrum-harness"
 purpose: "As regras que o código impõe hoje, uma por linha e testável: domínio (hierarquia, sprint, espiral, contratos, specs), segurança, performance e compliance; convenções da casa marcadas como tal."
-version: 3
+version: 5
 status: approved
 owner: domain
 ---
@@ -35,10 +35,10 @@ R22. Gate requirements → design: `requirements` com `version` inteiro ≥ 1, `
 R23. Gate design → tdd: `design` não vazio cujo frontmatter traz `traces:` (uma entrada inline `{ req, files, tests }` por linha): todo id `R<n>[letra]` declarado no início de linha do corpo dos requisitos aparece em alguma entrada, nenhum id desconhecido, `req` nunca vazio, caminhos relativos ao workspace (sem vazio, absoluto, `..` nem espaço); `files: []` declara requisito sem código; `tests: []` deixa o requisito "unproven" e nunca bloqueia.
 R24. Gate tdd → construction: ≥ 1 tarefa `test` e nenhuma `code` criada antes da primeira `test`, na ordem do número do id; `other` é livre; tarefas na lixeira não contam, arquivadas contam.
 R25. Gate construction → validation: ≥ 1 tarefa sob o componente e todas `done`.
-R26. Gate done: fase `validation`, ≥ 1 tarefa e todas `done`, `validation` com corpo não vazio, `validated_at` ISO-8601 entre aspas, `suite.tests` ≥ 1, `passed + skipped = tests`, `typecheck: clean`, `wall_seconds ≤ budget_seconds ≤` orçamento do quadro e, com `suite.runs`, ≥ 3 rodadas com a pior reportada em `wall_seconds`; a matriz de rastreabilidade fecha sobre a fonte efetiva (o as-built da validação vence o design).
+R26. Gate done: fase `validation`, ≥ 1 tarefa e todas `done`, `validation` com corpo não vazio, `validated_at` string ISO-8601 estendida (`AAAA-MM-DD` ou data-hora), que o parser da casa lê como string com ou sem aspas; um valor só-dígitos é recusado de qualquer forma (nu, o parser o lê como número), `suite.tests` ≥ 1, `passed + skipped = tests`, `typecheck: clean`, `wall_seconds ≤ budget_seconds ≤` orçamento do quadro e, com `suite.runs`, ≥ 3 rodadas com a pior reportada em `wall_seconds`; a matriz de rastreabilidade fecha sobre a fonte efetiva (o as-built da validação vence o design).
 R27. O gate de done só roda na transição para `done`: `done → done` é no-op e sair de `done` é livre.
 R28. Orçamento da suite: default 15 s; o quadro pode fixar outro (> 0) e subir acima de 15 exige razão, também ao regravar o mesmo valor; baixar nunca reabre um componente `done`. Este quadro está em 10 s (hoje — estado do quadro, mutável por `scrum_suite_budget`, não invariante).
-R29. O carimbo `status: approved` (requisitos no work item form, specs no git) é humano: o quadro o lê e nunca o escreve; os briefs pré-preenchem tudo menos o carimbo (convenção da casa, não gate — nenhuma verificação de identidade).
+R29. O carimbo `status: approved` (requisitos no work item form, specs no git) é decisão humana em uma de duas formas: o humano edita o campo, ou responde «aprovar» a uma pergunta explícita do agente que nomeia arquivo ou componente, versão e digest de um texto com revisão `current` a 0 HIGH — e o agente grava só `status` (fora do corpo: o digest de R30 não muda e a revisão segue `current`); pedido vago ou pergunta sem versão e digest não é carimbo; o quadro o lê e nunca o escreve; os briefs pré-preenchem tudo menos o carimbo (convenção da casa, não gate: sem verificação de identidade; a evidência da segunda forma é a conversa e, para specs, a mensagem de commit).
 R30. Digest é os 8 primeiros hex do sha1 do corpo trimado; uma revisão cobre exatamente uma versão e um digest, e texto mudado a torna stale.
 R31. O quadro nunca escreve `specs/`; para specs, a sonda (`scrum-probe`) lê só `<workspace>/specs/*.md` e `specs/reviews/*.review.md`, plano, arquivos regulares, extensão exata, nomes com ponto ignorados, ordem por comparação de string (`<`, unidade UTF-16 — igual a code point salvo entre um astral e um BMP acima de U+D7FF) (a sonda de rastreabilidade lê mais: S3); a sonda entrega dados, o Model classifica.
 R32. Uma spec é válida com frontmatter na linha 1 trazendo `title`, `purpose`, `version` inteiro ≥ 1, `status: draft | approved` e `owner` igual ao dono do catálogo, corpo não vazio, cada id (`R`, `S`, `P`, `C`, `CT-`) declarado uma vez e ≤ 256 KiB; arquivo fora do catálogo é `unknown`, nunca inválido.

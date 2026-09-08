@@ -1,7 +1,7 @@
 ---
 title: "Glossário — scrum-harness"
 purpose: "Os termos do domínio definidos uma vez, no sentido que este projeto usa: hierarquia do backlog, sprint e board, espiral, contratos e artefatos, spec set, superfícies e processo."
-version: 2
+version: 3
 status: approved
 owner: domain
 ---
@@ -63,7 +63,7 @@ Cada termo é definido uma única vez, em uma frase, no sentido que ESTE projeto
 - **TitleContract** — o contrato sobre uma string, não sobre um artefato: os tetos de título e meta, sem quebra de linha nem caractere de controle.
 - **SuiteBudget** — o value object do orçamento da suite do quadro, com origem (`default | board`) e razão obrigatória acima do default.
 - **Digest** — os 8 primeiros hex do sha1 do corpo (texto após o frontmatter) com espaços e quebras das pontas removidos (`trim`), que fixa uma revisão ao texto exato que cobriu.
-- **Carimbo humano (stamp)** — o `status: approved` no frontmatter de requisitos ou de spec, que só o humano escreve (no work item form ou no git); o quadro o lê, nunca o escreve.
+- **Carimbo humano (stamp)** — o `status: approved` no frontmatter de requisitos ou de spec, decidido pelo humano de uma de duas formas: ele mesmo edita o campo (work item form ou git), ou responde «aprovar» a uma pergunta explícita do agente que nomeia o arquivo ou componente, a versão e o digest de um texto cuja revisão `current` tem 0 HIGH — e então o agente grava só esse campo; um pedido vago não é carimbo; o quadro o lê, nunca o escreve (ver PRD.md «Persona alvo» e «Riscos conhecidos», RULES.md R29).
 - **Revisão adversarial (review)** — o parecer de um revisor independente sobre requisitos ou spec, em rodadas (`round`), com `findings` contados por `high | medium | low` e `verdict: approved | needs-revision`.
 - **Matriz de rastreabilidade (traces)** — o `traces:` do frontmatter do design (o plano) ou da validação (o as-built, que vence): uma entrada inline por linha `{ req, files, tests }`, `files: []` para requisito sem código.
 - **Orçamento da suite (suite budget)** — o teto de segundos da suite que o quadro impõe ao `budget_seconds` (default 15); com `suite.runs` (≥ 3 rodadas consecutivas) a pior rodada conta e `wall_seconds` deve reportá-la.
@@ -95,7 +95,7 @@ Cada termo é definido uma única vez, em uma frase, no sentido que ESTE projeto
 - **"epic"** — não se usa: o nível acima do componente é a Função (feature).
 - **"story" / "issue" / "ticket"** — não se usa: conforme o nível, é Tarefa ou Componente; o vocabulário é o da hierarquia.
 - **"status" por "fase"** — não confundir: estado é o workflow do nível (`proposed | in_progress | done`), fase é a posição na espiral; um componente tem os dois.
-- **"aprovar" pelo agente** — o agente nunca "aprova" nem escreve `status: approved`: só o humano carimba; o agente entrega rascunhos e pede o carimbo.
+- **"aprovar" pelo agente** — o agente nunca decide um `approved`: entrega rascunhos, pede o carimbo com uma pergunta que nomeia arquivo ou componente, versão e digest, e só grava `status: approved` depois da resposta explícita do humano a essa pergunta — nunca por iniciativa própria, por pedido vago («pode seguir») nem sobre texto sem revisão `current` a 0 HIGH (ver «Carimbo humano»).
 - **"revisão" sem qualificador** — toda revisão deste projeto é adversarial, com rodada, findings e verdict; "revisão" não é a coluna `review` do Kanban.
 - **"backlog" como arquivo** — não existe um arquivo de backlog: o quadro é o backlog (por isso `TASKS.md` fica fora do conjunto mínimo).
 - **"spec" para artefato de componente** — artefato é do quadro (requisitos, revisão, design, validação de um componente); spec é do disco (`specs/`).

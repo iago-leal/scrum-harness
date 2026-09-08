@@ -1,53 +1,75 @@
 ---
 file: PRD.md
 reviewer: subagent adversarial reviewer (<modelo>)
-reviewed_version: 3
-reviewed_digest: "560207d2"
+reviewed_version: 5
+reviewed_digest: "8099e2d5"
 verdict: approved
-round: 3
-findings: { high: 0, medium: 0, low: 0 }
+round: 5
+findings: { high: 0, medium: 0, low: 2 }
 ---
-# Revisão adversarial — specs/PRD.md (v3, digest 560207d2) — rodada 3
+# Revisão adversarial — specs/PRD.md (v5, digest 8099e2d5) — rodada 5 (fechamento)
 
-Rodada de fechamento, como combinado na rodada 2: absorção item a item dos 4 achados (H1, L1, L2, L3), confirmação de que nada mais mudou materialmente, e leitura completa da v3 à procura de fato falso novo. Fontes: `specs/PRD.md` (v3), `specs/reviews/PRD.review.md` (rodada 2, com as citações da v2), `scrum_spec_status` (PRD.md `draft v3 · 560207d2`, owner `product`, sem ids — o template do PRD não os exige). A tabulação de cerimônias da rodada 2 (spr-21: só review + retrospectiva; spr-22 a spr-25 com as três) foi tomada como fonte, não refeita.
+## Método
+Rodada de fechamento, somente leitura. Fontes: leitura integral de `specs/PRD.md` v5 (60 linhas); `scrum_spec_status` (PRD.md `draft v5 · 8099e2d5`, owner `product`, sem ids; revisão anterior `stale` por versão e digest — como esperado); `specs/reviews/PRD.review.md` rodada 4 (v4/78228fa7, `approved`, `findings { 0, 2, 2 }`) para conferir a absorção item a item; `git diff -- specs/PRD.md` e `git diff --stat` (v3 commitada → v5 no working tree: 1 arquivo, 5 inserções, 5 remoções); template do PRD em `packages/scrum-domain/src/spec-brief.ts:31-40` para as seções. Não rodei suite, instalador nem build; não modifiquei nada além deste parecer.
 
-## Absorção da rodada 2 (item a item)
+## Absorção da rodada 4
+| Achado | Onde (v5) | Citação | Estado |
+|---|---|---|---|
+| **M1** — condição «revisão `current` com 0 HIGH» ausente nas três frases | `specs/PRD.md:14` | «…a versão e o digest **de um texto cuja revisão `current` tem 0 HIGH**, caso em que o agente grava só o campo `status`» | absorvido, texto proposto |
+| | `specs/PRD.md:45` | «…que nomeia arquivo, versão e digest **de um texto com revisão `current` sem HIGH**» | absorvido, texto proposto |
+| | `specs/PRD.md:50` | «…versão e digest **de um texto já revisado**» | absorvido (a forma opcional proposta para o Risco; a condição forte fica em l.14/l.45, como a rodada 4 admitia) |
+| **M2** — risco cala que a evidência da forma 2 fica só na conversa | `specs/PRD.md:50` | «**; a evidência da segunda forma (a pergunta e a resposta) fica na conversa, que o quadro não persiste — no git os dois carimbos são indistinguíveis**, salvo o que a mensagem de commit declarar.» | absorvido, texto proposto + qualificador «salvo o que a mensagem de commit declarar» (honesto e verdadeiro: a convenção de commit da casa escreve `human-stamped`) |
+| **L1** — «os dois carimbos» ambíguo em l.14 | `specs/PRD.md:14` | «o quadro reflete **os carimbos de requisitos e de specs**, nunca os escreve por conta própria» | absorvido, texto proposto |
+| **L2** — l.45/l.50 sem «arquivo/componente» | `specs/PRD.md:45` | «que nomeia **arquivo**, versão e digest» | absorvido, texto proposto |
+| | `specs/PRD.md:50` | «que nomeia **arquivo ou componente**, versão e digest» | absorvido, texto proposto |
 
-| Achado | Absorvido? | Onde (citação da v3) |
-|---|---|---|
-| H1 — spr-21 sem Planning (critério 2) | **Sim**, opção (a) adotada literalmente | «Toda sprint encerrada a partir da spr-11 (rel-17) tem Planning, Review e Retrospectiva registradas como cerimônias, **com uma exceção declarada: a spr-21 não tem Planning registrada (aberta a partir dos action-items da retrospectiva da spr-20)**; spr-1 a spr-10 são legado anterior à disciplina …» |
-| L1 — parêntese do legado não era exaustivo | **Sim**, texto proposto adotado | «(a spr-1 não tem cerimônia; spr-2 a spr-7 não têm retrospectiva; spr-8 a spr-10 já têm as três, mas ficam no legado por serem anteriores à espiral)» |
-| L2 — TASKS/README fora da rel-21 | **Sim**, nas duas linhas do «Ver também» | «TASKS.md — … **Fora da rel-21: a escrever em release posterior.**» / «`specs/README.md` — … **Fora da rel-21: a escrever em release posterior.**» |
-| L3 — o que `repo-specs.spec.ts` confere | **Sim**, texto proposto adotado | «— o teste de aceitação (`repo-specs.spec.ts`) confere esses sete **e ainda que nada em `specs/` esteja inválido, desconhecido ou sem revisão `current`**.» |
+Os quatro achados foram absorvidos com os textos propostos, nas mesmas três frases, sem nada a mais. `version: 5` em `specs/PRD.md:4`.
 
-## Nada mais mudou materialmente
+## Diff v3→v5
+`git diff --stat -- specs/PRD.md`: `1 file changed, 5 insertions(+), 5 deletions(-)`. As cinco linhas trocadas são exatamente:
+1. `specs/PRD.md:4` — `version: 3 → 5`.
+2. `specs/PRD.md:5` — `status: approved → draft` (correto: texto novo, carimbo cai).
+3. `specs/PRD.md:14` — Persona alvo, bullet 1 (as duas formas de carimbo, M1 + L1).
+4. `specs/PRD.md:45` — Não objetivos, bullet 5 (M1 + L2).
+5. `specs/PRD.md:50` — Riscos conhecidos, bullet 2 (M2 + L2 + «já revisado»).
 
-Conferi cada citação da v2 registrada na tabela da rodada 2 (H1, H2, M2, M3, M4, L1–L6 da rodada 1) contra a v3: todas continuam presentes, palavra por palavra, nas mesmas seções. Visão, Persona alvo, Jobs to be done, os sete Objetivos do produto, critérios 1, 4 e 5, os seis Não objetivos e os seis Riscos conhecidos estão inalterados. As únicas diferenças da v2 para a v3 são as quatro frases acima e o `version: 3`. Frontmatter íntegro: `version: 3`, `status: draft` (o carimbo `approved` é humano), `owner: product`, `title`/`purpose` presentes.
+`title`, `purpose`, `owner`, Visão, Jobs, Objetivos, Critérios, os demais bullets de Persona/Não objetivos/Riscos e «Ver também» estão byte-idênticos à v3 commitada. Escopo confirmado: só frontmatter e as três frases.
 
-Fato novo introduzido pela v3 — só um, e verdadeiro: «a spr-21 não tem Planning registrada (aberta a partir dos action-items da retrospectiva da spr-20)» — bate com a tabulação da rodada 2 (cer-114 review + cer-115 retrospective, nascida dos action-items da cer-113). Os demais números seguem os já conferidos (80/120; 10 s hoje / default 15 s; ≤ 1 800; comp-47 = v0.14; comp-42/comp-48 à mão; spr-11 = primeira sprint da rel-17; os sete arquivos do `PIPELINE`).
+### Releitura das três frases
+- **Contradição interna**: nenhuma. As três dizem o mesmo modelo — decisão humana; duas formas (edição direta / «aprovar» a pergunta explícita com arquivo-ou-componente + versão + digest sobre texto com revisão `current` sem HIGH); o agente grava só `status`; pedido vago não vale; o quadro só lê. l.14 é a mais completa, l.45 e l.50 são compatíveis com ela e não a alargam.
+- **Coerência com o resto do PRD**: Visão l.11 («persistido fora das conversas … sobreviva à conversa») não é contradita por l.50 — l.50 declara justamente, como risco, o pedaço do processo que **não** sobrevive à conversa, que é o papel da seção. Jobs l.21 («carimbo humano») continua verdadeiro: a decisão é humana nas duas formas. Objetivo 7 l.31 («o quadro lê, contrata e rastreia, nunca as escreve») ✓ — quem grava na forma 2 é o agente, não o quadro. Critério 3 l.36 (`approved` com revisão `current`) é indiferente à forma e agora é reforçado por l.14/l.45 (a forma 2 só cai sobre revisão `current` sem HIGH).
+- **Peso**: l.14 (~620 caracteres) e l.50 (~560) são os dois bullets mais longos do PRD; l.50 encadeia cinco orações com dois travessões e três ponto-e-vírgulas. Legível, mas no limite para um bullet de PRD — ver L2 (estilo, opcional).
 
 ## HIGH
-
 Nenhum.
 
 ## MEDIUM
-
 Nenhum.
 
 ## LOW
 
-Nenhum.
+### L1 — «no git os dois carimbos são indistinguíveis» (`:50`) só cobre specs; o bullet fala de «arquivo ou componente»
+- **Problema.** A frase de M2 foi absorvida com «no git», mas o mesmo bullet acaba de dizer que a pergunta nomeia «arquivo **ou componente**». Requisitos de componente não vivem no git: vivem no storage do quadro, onde as duas formas também são indistinguíveis (o artefato guarda o texto, não quem o gravou) — e ali nem a mensagem de commit socorre.
+- **Por que importa.** Pequena: o risco continua verdadeiro e completo para specs; para requisitos fica implícito. Quem citar só o Risco (GLOSSARY «Carimbo humano», RULES R29) pode ler que o problema de rastro é do git.
+- **Mudança concreta (opcional).** «— no git (specs) e no storage do quadro (requisitos) os dois carimbos são indistinguíveis, salvo o que a mensagem de commit declarar.»
+- **Evidência.** `specs/PRD.md:50`; `specs/PRD.md:14` («work item form para requisitos, `specs/` no git para specs»); `specs/PRD.md:22` («o quadro em storage próprio, as specs e revisões no git»).
+
+### L2 — `:50` ficou pesado para um bullet de PRD (estilo)
+- **Problema.** Cinco orações, dois travessões aninhados e três ponto-e-vírgulas num único bullet; o parêntese «— edição direta do humano, ou resposta explícita … de um texto já revisado —» repete o que l.14 e l.45 já definem.
+- **Por que importa.** Só legibilidade; não há erro nem ambiguidade.
+- **Mudança concreta (opcional).** Cortar o parêntese e apontar: «o carimbo é decisão humana por convenção de tool e brief (as duas formas da Persona), não por verificação de identidade; um pedido vago («pode seguir») não é carimbo, e nada impede um agente desobediente de gravar o campo; a evidência da segunda forma …».
+- **Evidência.** `specs/PRD.md:50` vs `:14`, `:45`.
+
+Ambos os LOW são não-bloqueantes; o autor pode decidir **não** absorvê-los e levar a v5 ao carimbo como está (evita uma rodada 6 sobre estilo).
+
+## Observações fora do escopo do PRD (sem achado; para os owners seguintes)
+- `specs/AGENTS.md` v2 (`draft`, revisão `current`) fixa o modelo **estrito** («o agente nunca carimba, nem quando o humano … responde «Aprovar» a uma pergunta»; «Desvio a corrigir a partir de agora») — contradiz o PRD v5, que é a raiz da cadeia e diz o modelo de duas formas. Não é achado do PRD: é o AGENTS.md (task-186, em andamento) que deve alinhar-se numa v3, junto com GLOSSARY.md `:66`/`:98`, RULES.md R29 e a convenção do brief em `spec-brief.ts:168` («never yours»), como a rodada 4 já apontou.
 
 ## Sections I would keep
+- **Persona alvo** (`:14-15`) — bullet 1 agora enuncia as cinco condições da forma 2 e desfaz a ambiguidade de «os dois carimbos»; é a frase de referência para GLOSSARY e RULES. Bullet 2 intocado e continua a melhor justificativa do produto.
+- **Não objetivos** (`:41-46`) — bullet 5 mantém «o quadro só lê» como cláusula final e agora cita arquivo, versão, digest e revisão `current` sem HIGH.
+- **Riscos conhecidos** (`:49-54`) — bullet 2 é honesto em três camadas: desobediência, ausência de verificação de identidade, e agora a evidência que não sobrevive à conversa; o qualificador da mensagem de commit é verdadeiro e útil.
+- **Visão, Jobs, Objetivos, Critérios, Ver também** — byte-idênticos à v3 aprovada; nada a rever.
 
-- **Visão** e **Persona alvo**: inalteradas desde a v2 — as duas personas dizem quem carimba o quê e por onde, e «disciplina que não dependa de obediência ao prompt» continua a melhor frase do documento.
-- **Jobs to be done**: os cinco jobs mapeiam 1:1 para o que existe, com os sete papéis do catálogo no item 4.
-- **Objetivos do produto**: todos os sete, cada número conferido nas rodadas anteriores; o objetivo 1 qualificado sem perder a força.
-- **Critérios de sucesso**, agora os cinco: o critério 2 diz a verdade sobre o furo da spr-21 e sobre o legado spr-1 a spr-10; o critério 3 descreve o gate inteiro do `repo-specs.spec.ts`, não só a contagem.
-- **Não objetivos**: os seis, corretos.
-- **Riscos conhecidos**: o item 1 honesto (hotfix fora da espiral); os outros cinco, hipóteses verificáveis.
-- **Ver também**: as quatro linhas agora distinguem o que a rel-21 entrega (GLOSSARY, RULES) do que é referência da cadeia para release posterior (TASKS, `specs/README.md`), sem promessa que derrubaria o teste de aceitação.
-
-## Verdict
-
-**approved** — a v3 absorveu integralmente o HIGH e os três LOW da rodada 2 com os textos propostos, não alterou nenhuma outra seção, e o único fato novo (a exceção da spr-21) é verdadeiro pela tabulação do quadro. Não há mais nenhuma afirmação histórica no PRD que o próprio quadro desminta. Pronto para o carimbo humano (`status: approved` no frontmatter).
+## Veredito
+**approved** — 0 HIGH, 0 MEDIUM, 2 LOW. Os quatro achados da rodada 4 (M1, M2, L1, L2) foram absorvidos item a item com os textos propostos; o diff v3→v5 está confinado ao frontmatter (`version: 5`, `status: draft`) e às três frases (`:14`, `:45`, `:50`); as três frases não se contradizem entre si nem com Visão, Jobs l.21, Objetivo 7 e Critério 3; o contrato do arquivo está íntegro (frontmatter na linha 1 com `title`/`purpose` entre aspas, `owner: product`, sem ids, as sete seções do template de `spec-brief.ts:31-40` presentes, «Ver também» explícito). Os dois LOW são precisão de alcance («no git» vs requisitos no storage) e estilo; não bloqueiam o carimbo humano.
